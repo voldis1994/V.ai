@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mainbrain"
+version = "1.0.0"
+description = "Main Brain OS — lokāls Windows AI vadības centrs"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "MainBrainOS" }]
+dependencies = [
+  "fastapi==0.115.6",
+  "uvicorn[standard]==0.34.0",
+  "pydantic==2.10.4",
+  "pydantic-settings==2.7.0",
+  "httpx==0.28.1",
+  "websockets==14.1",
+  "langgraph==0.2.60",
+  "langchain-core==0.3.28",
+  "aiosqlite==0.20.0",
+  "pyyaml==6.0.2",
+  "psutil==6.1.1",
+  "orjson==3.10.12",
+  "python-multipart==0.0.20",
+  "rich==13.9.4",
+  "jinja2==3.1.5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.3.4",
+  "pytest-asyncio==0.25.0",
+  "pytest-cov==6.0.0",
+  "ruff==0.8.6",
+  "anyio==4.7.0",
+]
+
+[project.scripts]
+mainbrain-api = "mainbrain.api.app:run"
+
+[tool.setuptools.packages.find]
+where = ["src/backend"]
+include = ["mainbrain*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests/python"]
+pythonpath = ["src/backend"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
