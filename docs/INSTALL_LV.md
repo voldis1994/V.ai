@@ -9,10 +9,30 @@
 - (Neobligāti) llama.cpp `llama-server` vai Ollama
 - (Neobligāti) GGUF modeļi
 
-## Soļi
+## Ātrā uzstādīšana (ieteicams)
+
+Veiciet dubultklikšķi uz projekta saknes faila:
+
+```text
+START_MAINBRAIN.bat
+```
+
+Tas automātiski (ar jūsu apstiprinājumu):
+1. lejupielādē/instalē **.NET 8 SDK** (ja nav),
+2. lejupielādē/instalē **Python 3.12+** (ja nav),
+3. lejupielādē/instalē **WebView2 Runtime** (ja nav),
+4. izveido `.venv` un instalē Python atkarības,
+5. sagatavo `%LOCALAPPDATA%\MainBrainOS`,
+6. pēc izvēles palaiž izstrādes vidi.
+
+**Piezīme:** GGUF AI modeļi **netiek** lejupielādēti automātiski (vairāki GB). Tos ievietojiet `%LOCALAPPDATA%\MainBrainOS\models` un palaidiet `llama-server` vai Ollama.
+
+Alternatīvi PowerShell:
 
 ```powershell
-cd MainBrainOS
+cd <projekta-sakne>
+./scripts/bootstrap_windows.ps1
+# vai
 ./scripts/setup_windows.ps1
 ./scripts/start_dev.ps1
 ```
