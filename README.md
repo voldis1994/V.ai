@@ -4,7 +4,17 @@ Lokāls Windows AI vadības centrs: **MainBrain.exe**, Main Brain orķestrators,
 
 ## Ātrā sākšana (Windows)
 
+Veiciet dubultklikšķi:
+
+```text
+START_MAINBRAIN.bat
+```
+
+Tas lejupielādē un uzstāda .NET 8, Python 3.12+, WebView2 un projekta atkarības (GGUF modeļus — manuāli).
+
 ```powershell
+./scripts/bootstrap_windows.ps1
+# vai
 ./scripts/setup_windows.ps1
 ./scripts/start_dev.ps1
 ```

@@ -4,6 +4,12 @@
 **Zars:** `cursor/main-brain-os-full-impl`  
 **Vide:** Linux (WPF/UIA palaišana BLOĶĒTA)
 
+## Jaunākais papildinājums
+
+- [x] `START_MAINBRAIN.bat` — sākuma instalētājs (lejupielādē .NET/Python/WebView2, venv, palaišana)
+- [x] `scripts/bootstrap_windows.ps1` — pilnais bootstrap
+- [x] `scripts/START_INSTALL.bat` — īsceļš no scripts\
+
 ## Šīs sesijas paveiktais (turpinājums, nevis pārrakstīšana)
 
 ### Audits
