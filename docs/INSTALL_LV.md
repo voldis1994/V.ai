@@ -25,7 +25,19 @@ Tas automātiski (ar jūsu apstiprinājumu):
 5. sagatavo `%LOCALAPPDATA%\MainBrainOS`,
 6. pēc izvēles palaiž izstrādes vidi.
 
-**Piezīme:** GGUF AI modeļi **netiek** lejupielādēti automātiski (vairāki GB). Tos ievietojiet `%LOCALAPPDATA%\MainBrainOS\models` un palaidiet `llama-server` vai Ollama.
+### GGUF AI modeļi
+
+Tos **var** lejupielādēt uzreiz ar skaidru izvēli `START_MAINBRAIN.bat` → **[4]** light vai **[5]** standard  
+(vai `scripts/download_models.ps1`).
+
+Tie **nav** noklusējuma 1. opcijā, jo:
+- aizņem ~2–10 GB,
+- ir licences nosacījumi,
+- atkarīgi no RAM/VRAM,
+- specifikācija aizliedz klusu gigabaitu lejupielādi bez piekrišanas.
+
+Modeļu mape: `%LOCALAPPDATA%\MainBrainOS\models`  
+Katalogs: `models/manifest.json`
 
 Alternatīvi PowerShell:
 

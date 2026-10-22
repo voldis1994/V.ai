@@ -4,13 +4,17 @@
   Main Brain OS — automātiska Windows atkarību lejupielāde un uzstādīšana.
 .DESCRIPTION
   Pārbauda/instalē: winget rīkus, .NET 8 SDK, Python 3.12+, WebView2 Runtime,
-  projekta .venv, pip atkarības, datu mapes. Nelejupielādē GGUF modeļus bez
-  lietotāja piekrišanas (tie ir lieli).
+  projekta .venv, pip atkarības, datu mapes.
+  GGUF modeļus lejupielādē TIKAI ar -DownloadModels (vai START_MAINBRAIN.bat izvēli),
+  jo tie ir lieli un ir licences nosacījumi.
 #>
 param(
     [switch]$SkipStart,
     [switch]$IncludeDevTools,
-    [switch]$AcceptDownloads
+    [switch]$AcceptDownloads,
+    [switch]$DownloadModels,
+    [ValidateSet("light", "standard")]
+    [string]$ModelProfile = "light"
 )
 
 $ErrorActionPreference = "Stop"
@@ -81,7 +85,11 @@ if (-not $AcceptDownloads) {
     Write-Host "  - Python 3.12+ (ja nav)"
     Write-Host "  - Microsoft Edge WebView2 Runtime (ja nav)"
     Write-Host "  - Python virtuālā vide un pip pakotnes"
-    Write-Host "GGUF AI modeļi NETIEK lejupielādēti automātiski (vairāki GB)."
+    if ($DownloadModels) {
+        Write-Host "  - GGUF AI modeļi (profils: $ModelProfile, vairāki GB no Hugging Face)"
+    } else {
+        Write-Host "GGUF AI modeļi šajā režīmā netiek lejupielādēti (izvēlieties bat opciju ar modeļiem)."
+    }
     Write-Host ""
     $ans = Read-Host "Turpināt? (J/N)"
     if ($ans -notmatch '^[jJyY]') {
@@ -238,12 +246,26 @@ if (Test-Path (Join-Path $root "MainBrainOS.sln")) {
     }
 }
 
-# --- Modeļu norāde ---
+# --- Modeļi ---
 Write-Step "Lokālie AI modeļi"
 $modelsDir = Join-Path $data "models"
+Ensure-Dir $modelsDir
 Write-Host "Modeļu mape: $modelsDir"
-Write-Host "GGUF failus ievietojiet šeit. Palaidiet llama-server vai Ollama atsevišķi."
-Write-Host "Automātiska vairāku GB modeļu lejupielāde NAV ieslēgta."
+if ($DownloadModels) {
+    $dl = Join-Path $root "scripts\download_models.ps1"
+    if (-not (Test-Path $dl)) {
+        Write-Err "Nav atrasts scripts\download_models.ps1"
+        exit 1
+    }
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $dl -Profile $ModelProfile -AcceptDownloads -ModelsDir $modelsDir
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "Modeļu lejupielāde beidzās ar kļūdu — pārējā uzstādīšana turpinās"
+    }
+} else {
+    Write-Host "GGUF nav lejupielādēti. Palaidiet:"
+    Write-Host "  scripts\download_models.ps1 -Profile light"
+    Write-Host "vai START_MAINBRAIN.bat → opcija ar modeļiem."
+}
 if (Test-Command "ollama") {
     Write-Ok "Ollama atrasta sistēmā (neobligāts rezerves adapters)"
 } else {
