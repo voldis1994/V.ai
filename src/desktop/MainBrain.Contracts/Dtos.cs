@@ -83,6 +83,7 @@ public sealed class CaptureSessionDto
     public string Status { get; set; } = "unavailable";
     public string? FramePath { get; set; }
     public string? Error { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
 public sealed class LearningMetricDto

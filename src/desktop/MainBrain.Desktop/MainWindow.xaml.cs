@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Media.Imaging;
 using MainBrain.Desktop.Services;
 using MainBrain.Desktop.ViewModels;
 
@@ -15,19 +16,57 @@ public partial class MainWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        var token = Environment.GetEnvironmentVariable("MAINBRAIN_API_TOKEN") ?? "";
-        var dataDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MainBrainOS");
-        var tokenFile = Path.Combine(dataDir, "api_token.txt");
-        if (string.IsNullOrWhiteSpace(token) && File.Exists(tokenFile))
+        try
         {
-            token = await File.ReadAllTextAsync(tokenFile);
-        }
+            await App.EnsureBackendAsync();
+            var host = App.Backend!;
+            App.BrowserAutomation.Attach(Browser);
+            // Multi režīma pārlūks — tā pati sesijas loģika caur tiltu izmanto Focus pārlūku kā primāro
+            // (Multi WebView2 ir vizuāls otrais skats; operācijas iet caur primāro Attach)
+            if (BrowserMulti is not null)
+            {
+                // Navigācijas sinhronizācija vizuāli
+                Browser.NavigationCompleted += (_, __) =>
+                {
+                    try
+                    {
+                        if (Browser.Source is not null)
+                        {
+                            BrowserMulti.Source = Browser.Source;
+                        }
+                    }
+                    catch { /* ignore */ }
+                };
+            }
 
-        var api = new ApiClient("http://127.0.0.1:8765", token.Trim());
-        var vm = new MainViewModel(api);
-        DataContext = vm;
-        await vm.InitializeAsync();
+            var api = new ApiClient(host.BaseUrl, host.Token);
+            var vm = new MainViewModel(api);
+            DataContext = vm;
+            await vm.InitializeAsync();
+
+            // Dzīvā attēla ceļa atjauninājums
+            vm.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName == nameof(MainViewModel.LiveImagePath) &&
+                    !string.IsNullOrWhiteSpace(vm.LiveImagePath) &&
+                    File.Exists(vm.LiveImagePath))
+                {
+                    var bmp = new BitmapImage();
+                    bmp.BeginInit();
+                    bmp.CacheOption = BitmapCacheOption.OnLoad;
+                    bmp.UriSource = new Uri(vm.LiveImagePath);
+                    bmp.EndInit();
+                    LiveImage.Source = bmp;
+                }
+            };
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                "Neizdevās startēt Main Brain OS:\n" + ex.Message,
+                "Kļūda",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
     }
 }

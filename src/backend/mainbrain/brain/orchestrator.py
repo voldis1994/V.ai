@@ -6,6 +6,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from mainbrain.agents.runtime import AgentRuntime
+from mainbrain.brain.planner import AiPlanner
 from mainbrain.contracts.schemas import (
     Artifact,
     Plan,
@@ -20,6 +21,7 @@ from mainbrain.contracts.schemas import (
 from mainbrain.core.ids import new_id, utc_now
 from mainbrain.learning.engine import LearningEngine
 from mainbrain.memory.store import MemoryStore
+from mainbrain.models.router import ModelRouter
 from mainbrain.scheduler.resources import ResourceScheduler
 from mainbrain.security.policy import PolicyEngine
 
@@ -44,12 +46,16 @@ class MainBrain:
         policy: PolicyEngine,
         learning: LearningEngine,
         scheduler: ResourceScheduler,
+        models: ModelRouter | None = None,
+        max_fix_attempts: int = 2,
     ) -> None:
         self.runtime = runtime
         self.store = store
         self.policy = policy
         self.learning = learning
         self.scheduler = scheduler
+        self.planner = AiPlanner(models or runtime.models)
+        self.max_fix_attempts = max_fix_attempts
         self._paused = False
         self._cancelled: set[str] = set()
         self._graph = self._build_graph()
@@ -124,6 +130,7 @@ class MainBrain:
 
     def stop_all(self) -> None:
         self.policy.stop()
+        self.runtime.tools.stop_owned_processes()
 
     async def _wait_if_paused(self) -> None:
         while self._paused and not self.policy.emergency_stop:
@@ -154,50 +161,36 @@ class MainBrain:
     async def _node_plan(self, state: BrainState) -> BrainState:
         goal = UserGoal.model_validate(state["goal"])
         await self._wait_if_paused()
-        req = await self.runtime.invoke(
-            "RequirementsPlanner",
-            goal.text,
-            workspace_path=goal.workspace_path,
-            correlation_id=goal.correlation_id,
-        )
-        dag = req.outputs.get("dag") or []
-        tasks: list[TaskNode] = []
-        for node in dag:
-            tasks.append(
-                TaskNode(
-                    id=str(node.get("id") or new_id("task_")),
-                    title=str(node.get("title") or "Uzdevums"),
-                    description=str(node.get("title") or ""),
-                    agent_id=node.get("agent"),
-                    depends_on=list(node.get("depends_on") or []),
-                    status=TaskStatus.PENDING,
-                )
-            )
-        # ja DAG tukšs — minimālais ceļš
-        if not tasks:
-            tasks = [
-                TaskNode(id="t1", title="Implementācija", description=goal.text, agent_id="PythonDeveloper"),
-                TaskNode(
-                    id="t2",
-                    title="Testi",
-                    description="Palaist testus",
-                    agent_id="UnitTestEngineer",
-                    depends_on=["t1"],
-                ),
-                TaskNode(
-                    id="t3",
-                    title="Pārbaude",
-                    description="Pārbaudīt rezultātu",
-                    agent_id="ResultReviewer",
-                    depends_on=["t2"],
-                ),
-            ]
-        # optimizē aģentu izvēli
-        ranking = dict(self.learning.rank_agents([t.agent_id for t in tasks if t.agent_id]))
+        # atmiņas norādes ietekmē plānošanu
+        memory_hints: list[str] = []
+        try:
+            hits = self.store.search_knowledge(goal.text[:80] or "projekts", limit=5)
+            memory_hints = [f"{h.get('source')}: {str(h.get('content', ''))[:160]}" for h in hits]
+        except Exception:  # noqa: BLE001
+            memory_hints = []
+
+        planned = await self.planner.plan(goal.text, memory_hints=memory_hints)
+        # metrikās balstīta aģentu izvēles korekcija
+        ranking = dict(self.learning.rank_agents([t.agent_id for t in planned.tasks]))
+        for task in planned.tasks:
+            score = ranking.get(task.agent_id, 0.5)
+            # ja ir labāks kandidāts tajā pašā "ģimenē", saglabā plānoto, bet ieraksta score
+            task.description = (task.description or "") + f" [score={score:.2f}]"
+
+        tasks = self.planner.to_task_nodes(planned)
         for task in tasks:
             if task.agent_id and task.agent_id in ranking:
                 task.inputs["selection_score"] = ranking[task.agent_id]
-        plan = Plan(goal_id=goal.id, summary=req.outputs.get("functional", [goal.text])[0], tasks=tasks)
+                task.inputs["plan_source"] = planned.source
+                task.inputs["used_model"] = planned.used_model
+
+        plan = Plan(
+            goal_id=goal.id,
+            summary=planned.summary or goal.text,
+            tasks=tasks,
+            assumptions=planned.assumptions,
+            risks=planned.risks,
+        )
         self.store.save_json(
             "plans",
             plan.id,
@@ -208,9 +201,9 @@ class MainBrain:
         event = ProgressEvent(
             correlation_id=goal.correlation_id,
             event_type="plan",
-            message=f"Plāns ar {len(tasks)} uzdevumiem",
+            message=f"Plāns ar {len(tasks)} uzdevumiem (avots={planned.source}, modelis={planned.used_model})",
             agent_id="RequirementsPlanner",
-            data={"plan_id": plan.id},
+            data={"plan_id": plan.id, "source": planned.source, "used_model": planned.used_model},
         )
         self.store.add_event(event)
         events = list(state.get("events", []))
@@ -272,11 +265,44 @@ class MainBrain:
                         inputs={
                             "task_id": task.id,
                             "prior": outputs_by_task,
+                            "last_error": task.error,
+                            "fix_attempt": task.retries,
                             **task.inputs,
                         },
                         workspace_path=goal.workspace_path,
                         correlation_id=goal.correlation_id,
                     )
+                    # Izveidot → Palaist → Pārbaudīt → Labot cikls programmēšanas uzdevumiem
+                    if (
+                        result.ok
+                        and agent_id in {"PythonDeveloper", "DotNetDeveloper", "BackendDeveloper"}
+                        and goal.workspace_path
+                    ):
+                        test_result = await self.runtime.invoke(
+                            "UnitTestEngineer",
+                            f"Pārbaudīt pēc: {task.title}",
+                            inputs={"task_id": task.id, "after": result.outputs},
+                            workspace_path=goal.workspace_path,
+                            correlation_id=goal.correlation_id,
+                        )
+                        if not test_result.ok or (
+                            test_result.verification and not test_result.verification.passed
+                        ):
+                            if task.retries < max(task.max_retries, self.max_fix_attempts):
+                                fix = await self.runtime.invoke(
+                                    agent_id,
+                                    f"Labot kļūdas pēc testa: {test_result.error or test_result.summary}",
+                                    inputs={
+                                        "task_id": task.id,
+                                        "last_error": test_result.error or test_result.summary,
+                                        "fix_attempt": task.retries + 1,
+                                        "prior_output": result.outputs,
+                                    },
+                                    workspace_path=goal.workspace_path,
+                                    correlation_id=goal.correlation_id,
+                                )
+                                task.retries += 1
+                                result = fix
                 finally:
                     self.scheduler.release_file(lock_path, task.id)
                 return task, result
@@ -288,10 +314,10 @@ class MainBrain:
                 task.status = TaskStatus.SUCCEEDED if result.ok else TaskStatus.FAILED
                 if not result.ok:
                     task.error = result.error
-                    if task.retries < task.max_retries:
+                    if task.retries < max(task.max_retries, self.max_fix_attempts):
                         task.retries += 1
                         task.status = TaskStatus.PENDING
-                        task.error = None
+                        # saglabā kļūdu nākamajam labošanas mēģinājumam
                         continue
                 outputs_by_task[task.id] = {"ok": result.ok, "outputs": result.outputs, "agent_id": result.agent_id}
                 for art in result.artifacts:

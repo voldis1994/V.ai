@@ -16,14 +16,41 @@ from mainbrain.contracts.schemas import PolicyDecision, ToolRequest, ToolResult
 from mainbrain.core.ids import utc_now
 from mainbrain.security.policy import PolicyEngine
 from mainbrain.security.redact import redact_secrets
+from mainbrain.tools.bridge import DesktopToolBridge
+
+BRIDGE_TOOLS = {
+    "window.enumerate",
+    "window.inspect",
+    "window.focus",
+    "window.resize",
+    "window.capture",
+    "uia.query",
+    "uia.invoke",
+    "uia.set_value",
+    "input.click",
+    "input.type",
+    "input.shortcut",
+    "browser.navigate",
+    "browser.inspect",
+    "browser.click",
+    "browser.fill",
+    "browser.screenshot",
+    "screen.capture",
+}
 
 
 class ToolProxy:
     """Visu rīku izpilde ar politiku pārbaudi pirms darbības."""
 
-    def __init__(self, policy: PolicyEngine, workspace: Path | None = None) -> None:
+    def __init__(
+        self,
+        policy: PolicyEngine,
+        workspace: Path | None = None,
+        bridge: DesktopToolBridge | None = None,
+    ) -> None:
         self.policy = policy
         self.workspace = workspace.resolve() if workspace else None
+        self.bridge = bridge or DesktopToolBridge()
         self._input_lock_owner: str | None = None
         self._handlers: dict[str, Callable[[ToolRequest], Any]] = {
             "files.list": self._files_list,
@@ -44,28 +71,29 @@ class ToolProxy:
             "git.commit": self._git_commit,
             "git.restore": self._git_restore,
             "tests.run": self._tests_run,
-            "window.enumerate": self._window_stub,
-            "window.inspect": self._window_stub,
-            "window.focus": self._window_stub,
-            "window.resize": self._window_stub,
-            "window.capture": self._window_stub,
-            "uia.query": self._window_stub,
-            "uia.invoke": self._window_stub,
-            "uia.set_value": self._window_stub,
-            "input.click": self._input_stub,
-            "input.type": self._input_stub,
-            "input.shortcut": self._input_stub,
-            "browser.navigate": self._browser_stub,
-            "browser.inspect": self._browser_stub,
-            "browser.click": self._browser_stub,
-            "browser.fill": self._browser_stub,
-            "browser.screenshot": self._browser_stub,
-            "screen.capture": self._screen_stub,
+            "window.enumerate": self._via_bridge,
+            "window.inspect": self._via_bridge,
+            "window.focus": self._via_bridge,
+            "window.resize": self._via_bridge,
+            "window.capture": self._via_bridge,
+            "uia.query": self._via_bridge,
+            "uia.invoke": self._via_bridge,
+            "uia.set_value": self._via_bridge,
+            "input.click": self._via_bridge,
+            "input.type": self._via_bridge,
+            "input.shortcut": self._via_bridge,
+            "browser.navigate": self._via_bridge,
+            "browser.inspect": self._via_bridge,
+            "browser.click": self._via_bridge,
+            "browser.fill": self._via_bridge,
+            "browser.screenshot": self._via_bridge,
+            "screen.capture": self._via_bridge,
             "logs.inspect": self._logs_inspect,
             "resources.inspect": self._resources_inspect,
         }
         self._processes: dict[int, subprocess.Popen[str]] = {}
-        self.browser_session: dict[str, Any] = {"url": None, "history": []}
+        self._owned_pids: set[int] = set()
+        self.browser_session: dict[str, Any] = {"url": None, "history": [], "confirmed": False}
 
     def set_workspace(self, path: str | Path | None) -> None:
         self.workspace = Path(path).resolve() if path else None
@@ -104,11 +132,36 @@ class ToolProxy:
             )
         try:
             output = handler(request)
+            # Bridge/Windows rīkiem ok tikai ja darbība patiešām veikta vai godīgi unavailable
+            ok = True
+            error = None
+            if isinstance(output, dict):
+                if output.get("performed") is False and output.get("status") not in {
+                    "unavailable",
+                    "ok",
+                    "session",
+                }:
+                    # unavailable ir derīgs platformas rezultāts; citi performed=false — kļūda
+                    if output.get("status") == "unavailable":
+                        ok = True
+                    elif "error" in str(output.get("status", "")) or output.get("status") in {
+                        "not_found",
+                        "blocked",
+                        "stopped",
+                        "focus_failed",
+                        "unauthorized",
+                    }:
+                        ok = False
+                        error = str(output.get("message") or output.get("status"))
+                if output.get("status") == "error":
+                    ok = False
+                    error = str(output.get("message") or "Rīka kļūda")
             return ToolResult(
                 request_id=request.id,
                 tool=request.tool,
-                ok=True,
+                ok=ok,
                 output=output,
+                error=error,
                 duration_ms=int((time.perf_counter() - started) * 1000),
                 policy=decision,
             )
@@ -121,6 +174,50 @@ class ToolProxy:
                 duration_ms=int((time.perf_counter() - started) * 1000),
                 policy=decision,
             )
+
+    def stop_owned_processes(self) -> list[int]:
+        """STOP: aptur tikai šī backend izveidotos bērnprocesus."""
+        stopped: list[int] = []
+        for pid in list(self._owned_pids):
+            try:
+                self._process_stop(ToolRequest(tool="process.stop", arguments={"pid": pid}))
+                stopped.append(pid)
+            except Exception:  # noqa: BLE001
+                pass
+            self._owned_pids.discard(pid)
+        # arī signalizē Desktop Bridge
+        if self.bridge.is_available:
+            self.bridge.call("bridge.stop", {})
+        return stopped
+
+    def _via_bridge(self, request: ToolRequest) -> dict[str, Any]:
+        response = self.bridge.call(
+            request.tool,
+            request.arguments,
+            agent_id=request.agent_id,
+            correlation_id=request.correlation_id,
+        )
+        result = response.get("result") if isinstance(response, dict) else None
+        if isinstance(result, dict):
+            # pārlūka sesijas atjauninājums tikai pēc apstiprināta rezultāta
+            if request.tool == "browser.navigate" and result.get("performed"):
+                url = str(request.arguments.get("url") or result.get("url") or "")
+                self.browser_session["url"] = url
+                self.browser_session["confirmed"] = True
+                self.browser_session["history"].append({"url": url, "at": utc_now().isoformat()})
+            return result
+        if isinstance(response, dict) and response.get("ok") is False:
+            return {
+                "status": "error",
+                "performed": False,
+                "message": response.get("error") or "Tilta kļūda",
+            }
+        return {
+            "status": "unavailable",
+            "performed": False,
+            "message": "Nav derīgas tilta atbildes",
+            "raw": response,
+        }
 
     # --- failu rīki ---
     def _resolve(self, path_value: str | None, *, must_exist: bool = False) -> Path:
@@ -214,7 +311,8 @@ class ToolProxy:
             text=True,
         )
         self._processes[proc.pid] = proc
-        return {"pid": proc.pid, "program": program, "status": "running"}
+        self._owned_pids.add(proc.pid)
+        return {"pid": proc.pid, "program": program, "status": "running", "performed": True}
 
     def _process_stop(self, request: ToolRequest) -> dict[str, Any]:
         pid = int(request.arguments["pid"])
@@ -337,58 +435,6 @@ class ToolProxy:
         else:
             cmd = [sys.executable, "-m", "unittest", "discover", "-s", target]
         return self._run_cmd(cmd, cwd=cwd, timeout=request.timeout_sec)
-
-    # --- Windows / pārlūka stubi ar godīgu statusu ---
-    def _platform_note(self) -> str:
-        if sys.platform != "win32":
-            return "Nav pieejams: Windows specifiska funkcija (pašreizējā OS nav Windows)"
-        return "Windows komponents nav inicializēts šajā backend procesā"
-
-    def _window_stub(self, request: ToolRequest) -> dict[str, Any]:
-        return {
-            "status": "unavailable",
-            "tool": request.tool,
-            "message": self._platform_note(),
-            "capture_status": "unavailable",
-        }
-
-    def _input_stub(self, request: ToolRequest) -> dict[str, Any]:
-        owner = request.agent_id or request.id
-        if self._input_lock_owner and self._input_lock_owner != owner:
-            return {
-                "status": "blocked",
-                "message": "Ievades fokusu pašlaik tur cits operators",
-                "owner": self._input_lock_owner,
-            }
-        self._input_lock_owner = owner
-        try:
-            return {
-                "status": "unavailable",
-                "tool": request.tool,
-                "message": self._platform_note(),
-            }
-        finally:
-            self._input_lock_owner = None
-
-    def _browser_stub(self, request: ToolRequest) -> dict[str, Any]:
-        # Backend uztur sesijas modeli; īstā WebView2 ir desktop pusē.
-        if request.tool == "browser.navigate":
-            url = str(request.arguments.get("url", ""))
-            self.browser_session["url"] = url
-            self.browser_session["history"].append({"url": url, "at": utc_now().isoformat()})
-            return {
-                "status": "queued_for_webview2",
-                "url": url,
-                "message": "Navigācija nodota iegultajai WebView2 sesijai (desktop)",
-            }
-        return {
-            "status": "session",
-            "session": self.browser_session,
-            "message": "Pārlūka darbība caur iegulto WebView2 kanālu",
-        }
-
-    def _screen_stub(self, request: ToolRequest) -> dict[str, Any]:
-        return {"status": "unavailable", "message": self._platform_note()}
 
     def _logs_inspect(self, request: ToolRequest) -> dict[str, Any]:
         path = request.arguments.get("path")

@@ -10,6 +10,7 @@ from mainbrain.contracts.schemas import (
     ToolRequest,
 )
 from mainbrain.core.ids import new_id, utc_now
+from mainbrain.security.execution_policy import assess_python_code, assess_shell_command
 from mainbrain.security.redact import redact_secrets
 
 
@@ -28,7 +29,6 @@ SAFE_TOOLS = {
     "browser.screenshot",
     "screen.capture",
     "tests.run",
-    "python.run",
     "dotnet.build",
 }
 
@@ -140,16 +140,59 @@ class PolicyEngine:
                     command=exe,
                 )
 
+        # Komandu/koda pārbaude — darba mape NAV pilnīga izolācija
+        if request.tool == "shell.run":
+            assessment = assess_shell_command(request.arguments.get("command", ""))
+            if not assessment["allowed"]:
+                return self._require_approval(
+                    request,
+                    reason=assessment["reason"],
+                    risk=RiskCategory.CRITICAL if assessment["risk"] == "critical" else RiskCategory.HIGH,
+                    impact="Čaulas komanda ar paaugstinātu risku",
+                    command=str(request.arguments.get("command") or ""),
+                )
+            if not self._path_safe(request):
+                return self._require_approval(
+                    request,
+                    reason="Čaulas izpilde ārpus drošās darba mapes",
+                    risk=RiskCategory.HIGH,
+                    impact="Procesu izpilde ārpus projekta",
+                    command=str(request.arguments.get("command") or ""),
+                )
+
+        if request.tool == "python.run" and request.arguments.get("code"):
+            assessment = assess_python_code(str(request.arguments.get("code")))
+            if not assessment["allowed"]:
+                return self._require_approval(
+                    request,
+                    reason=assessment["reason"],
+                    risk=RiskCategory.HIGH,
+                    impact="Python kods ar riskantām konstrukcijām",
+                )
+
         if request.tool in APPROVAL_TOOLS and not self._has_grant(request):
-            # drošās iekšējās darbības darba mapē var iet bez dialoga, ja auto_safe
-            if request.tool in {"python.run", "tests.run", "dotnet.build", "shell.run"} and self._path_safe(request):
-                if request.arguments.get("auto_safe", True):
-                    return PolicyDecision(
-                        allowed=True,
-                        reason="Atļauta izolēta projekta izpilde",
-                        risk_category=RiskCategory.MEDIUM,
-                        redacted_args=redact_secrets(request.arguments),
-                    )
+            # tests/dotnet/build/python.script darba mapē — atļauts ar ierobežojumiem
+            if request.tool in {"tests.run", "dotnet.build"} and self._path_safe(request):
+                return PolicyDecision(
+                    allowed=True,
+                    reason="Atļauta izolēta projekta testa/būvēšanas izpilde",
+                    risk_category=RiskCategory.MEDIUM,
+                    redacted_args=redact_secrets(request.arguments),
+                )
+            if request.tool == "python.run" and self._path_safe(request) and request.arguments.get("script"):
+                return PolicyDecision(
+                    allowed=True,
+                    reason="Atļauta projekta Python skripta izpilde (nav brīvs kods ar riskiem)",
+                    risk_category=RiskCategory.MEDIUM,
+                    redacted_args=redact_secrets(request.arguments),
+                )
+            if request.tool == "shell.run" and self._path_safe(request):
+                return PolicyDecision(
+                    allowed=True,
+                    reason="Atļauta čaulas komanda no atļauto prefiksu saraksta projekta mapē",
+                    risk_category=RiskCategory.MEDIUM,
+                    redacted_args=redact_secrets(request.arguments),
+                )
             return self._require_approval(
                 request,
                 reason=f"Rīks {request.tool} prasa lietotāja apstiprinājumu",

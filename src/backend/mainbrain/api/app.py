@@ -34,14 +34,17 @@ from mainbrain.tools.proxy import ToolProxy
 class AppState:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        # Tokens TIKAI no vides / skaidras konfigurācijas — nav publiska /auth/token
         self.auth = AuthGate(token=settings.api_token or AuthGate().token)
-        if not settings.api_token:
-            # saglabā sesijas tokenu failā lokālai desktop saitei
-            token_path = settings.data_dir / "api_token.txt"
-            token_path.write_text(self.auth.token, encoding="utf-8")
         self.store = MemoryStore(settings.db_path)
         self.policy = PolicyEngine(settings.workspace_root)
-        self.tools = ToolProxy(self.policy, settings.workspace_root)
+        from mainbrain.tools.bridge import DesktopToolBridge
+
+        self.tools = ToolProxy(
+            self.policy,
+            settings.workspace_root,
+            bridge=DesktopToolBridge(token=self.auth.token),
+        )
         self.models = ModelRouter(settings)
         self.learning = LearningEngine(self.store)
         self.scheduler = ResourceScheduler(
@@ -50,7 +53,14 @@ class AppState:
             max_browser=settings.max_browser_sessions,
         )
         self.runtime = AgentRuntime(self.tools, self.models, self.learning, self.scheduler)
-        self.brain = MainBrain(self.runtime, self.store, self.policy, self.learning, self.scheduler)
+        self.brain = MainBrain(
+            self.runtime,
+            self.store,
+            self.policy,
+            self.learning,
+            self.scheduler,
+            models=self.models,
+        )
         self.subscribers: list[WebSocket] = []
 
 
@@ -107,10 +117,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "language": "lv",
         }
 
-    @app.get("/auth/token")
-    async def get_token(st: AppState = Depends(state)) -> dict[str, str]:
-        # Tikai loopback — tokens jau ir lokālajā failā; endpoint palīdz desktop startam.
-        return {"token": st.auth.token}
+    @app.get("/auth/status", dependencies=[Depends(require_auth)])
+    async def auth_status() -> dict[str, Any]:
+        """Apstiprina, ka klients jau zina derīgu tokenu. Pašu tokenu neatklāj."""
+        return {"authenticated": True, "method": "bearer"}
 
     @app.get("/agents", dependencies=[Depends(require_auth)])
     async def agents() -> list[dict[str, Any]]:
@@ -169,10 +179,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return approval.model_dump(mode="json")
 
     @app.post("/control/stop", dependencies=[Depends(require_auth)])
-    async def emergency_stop(st: AppState = Depends(state)) -> dict[str, str]:
+    async def emergency_stop(st: AppState = Depends(state)) -> dict[str, Any]:
         st.brain.stop_all()
-        await _broadcast(st, {"type": "stop", "data": {"active": True}})
-        return {"status": "STOP aktīvs"}
+        stopped = st.tools.stop_owned_processes()
+        await _broadcast(st, {"type": "stop", "data": {"active": True, "stopped_pids": stopped}})
+        return {"status": "STOP aktīvs", "stopped_pids": stopped}
 
     @app.post("/control/pause", dependencies=[Depends(require_auth)])
     async def pause(st: AppState = Depends(state)) -> dict[str, str]:
@@ -228,11 +239,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def ws_events(websocket: WebSocket) -> None:
         await websocket.accept()
         st = state()
-        # vienkārša auth caur query
-        token = websocket.query_params.get("token")
-        if not st.auth.verify(token):
+        # Auth ar pirmo JSON ziņojumu {"type":"auth","token":"..."} — tokens nav URL
+        try:
+            first = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
+        except Exception:  # noqa: BLE001
             await websocket.close(code=4401)
             return
+        token = None
+        if isinstance(first, dict) and first.get("type") == "auth":
+            token = first.get("token")
+        if not st.auth.verify(token if isinstance(token, str) else None):
+            await websocket.close(code=4401)
+            return
+        await websocket.send_json({"type": "auth_ok"})
         st.subscribers.append(websocket)
         try:
             while True:

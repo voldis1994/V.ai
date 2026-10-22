@@ -642,7 +642,26 @@ def test_write_report():
     def _browser_operator(self, agent, goal, inputs, model_note):
         url = inputs.get("url") or "https://example.com"
         result = self._tool(agent, "browser.navigate", {"url": url})
-        return self._ok(agent, "Pārlūka navigācija", {"final_url": url, "observations": [result.output], "model_note": model_note}, tool_results=[result])
+        performed = isinstance(result.output, dict) and result.output.get("performed") is True
+        if not performed:
+            return AgentInvokeResult(
+                agent_id=agent.id,
+                ok=False,
+                summary="Pārlūka navigācija nav apstiprināta",
+                outputs={
+                    "final_url": None,
+                    "observations": [result.output],
+                    "model_note": model_note,
+                },
+                tool_results=[result],
+                error=str((result.output or {}).get("message") if isinstance(result.output, dict) else "Nav veikta"),
+            )
+        return self._ok(
+            agent,
+            "Pārlūka navigācija",
+            {"final_url": url, "observations": [result.output], "model_note": model_note},
+            tool_results=[result],
+        )
 
     def _form_operator(self, agent, goal, inputs, model_note):
         return self._ok(
@@ -664,7 +683,26 @@ def test_write_report():
 
     def _website_qa(self, agent, goal, inputs, model_note):
         nav = self._tool(agent, "browser.navigate", {"url": inputs.get("url") or "https://example.com"})
-        return self._ok(agent, "Website QA", {"passed": ["navigate_queued"], "failed": [], "model_note": model_note}, tool_results=[nav])
+        performed = isinstance(nav.output, dict) and nav.output.get("performed") is True
+        if performed:
+            return self._ok(
+                agent,
+                "Website QA",
+                {"passed": ["navigate"], "failed": [], "model_note": model_note},
+                tool_results=[nav],
+            )
+        return self._ok(
+            agent,
+            "Website QA — pārlūks nav apstiprināts šajā vidē",
+            {
+                "passed": [],
+                "failed": [],
+                "blocked": [nav.output],
+                "status": "unavailable",
+                "model_note": model_note,
+            },
+            tool_results=[nav],
+        )
 
     def _download_verifier(self, agent, goal, inputs, model_note):
         url = str(inputs.get("url") or "")

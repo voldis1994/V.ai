@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.IO;
 using System.Windows;
 using MainBrain.Desktop.Services;
 
@@ -7,9 +5,10 @@ namespace MainBrain.Desktop;
 
 public partial class App : Application
 {
-    private BackendHost? _backend;
+    public static BackendHost? Backend { get; private set; }
+    public static BrowserAutomationService BrowserAutomation { get; } = new();
 
-    protected override async void OnStartup(StartupEventArgs e)
+    protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
         DispatcherUnhandledException += (_, args) =>
@@ -17,18 +16,27 @@ public partial class App : Application
             MessageBox.Show(args.Exception.Message, "Main Brain OS kļūda", MessageBoxButton.OK, MessageBoxImage.Error);
             args.Handled = true;
         };
-
-        _backend = new BackendHost();
-        await _backend.StartAsync();
     }
 
     protected override async void OnExit(ExitEventArgs e)
     {
-        if (_backend is not null)
+        if (Backend is not null)
         {
-            await _backend.StopAsync();
+            await Backend.StopAsync();
+            Backend.Dispose();
         }
 
         base.OnExit(e);
+    }
+
+    public static async Task EnsureBackendAsync()
+    {
+        if (Backend is not null)
+        {
+            return;
+        }
+
+        Backend = new BackendHost();
+        await Backend.StartAsync(BrowserAutomation.HandleBridgeRequestAsync);
     }
 }

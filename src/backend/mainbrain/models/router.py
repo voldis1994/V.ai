@@ -17,6 +17,8 @@ class ModelRouter:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self._role_models: dict[ModelRole, dict[str, Any]] = {}
+        self._health_cache: list[ModelHealth] | None = None
+        self._health_cache_at: float = 0.0
         self.scan_models()
 
     def scan_models(self) -> list[dict[str, Any]]:
@@ -45,26 +47,42 @@ class ModelRouter:
                 self._role_models.setdefault(ModelRole.REASONING, {"provider": "llama.cpp", **item})
         return found
 
-    async def health(self) -> list[ModelHealth]:
+    async def health(self, *, force: bool = False) -> list[ModelHealth]:
+        import time
+
+        if not force and self._health_cache and (time.time() - self._health_cache_at) < 60:
+            return self._health_cache
         results: list[ModelHealth] = []
         llama_ok, llama_detail = await self._probe_openai_compatible(self.settings.llama_base_url)
         ollama_ok, ollama_detail = await self._probe_ollama(self.settings.ollama_base_url)
         for role in (ModelRole.REASONING, ModelRole.CODING, ModelRole.VISION, ModelRole.EMBEDDING):
             mapped = self._role_models.get(role)
-            available = bool(mapped) and (llama_ok or ollama_ok)
             provider = None
             base = None
             details = "Modelis nav konfigurēts"
+            available = False
             if mapped and llama_ok:
                 provider = "llama.cpp"
                 base = self.settings.llama_base_url
-                details = f"GGUF: {mapped['name']}; {llama_detail}"
+                # Īsta īsa inference — nedrīkst uzskatīt /models par pietiekamu
+                probe = await self._probe_inference_openai(base)
+                available = probe[0]
+                details = f"GGUF: {mapped['name']}; {llama_detail}; inference={probe[1]}"
             elif mapped and ollama_ok:
                 provider = "ollama"
                 base = self.settings.ollama_base_url
-                details = f"Fails: {mapped['name']}; {ollama_detail}"
+                probe = await self._probe_inference_ollama(base, mapped["name"])
+                available = probe[0]
+                details = f"Fails: {mapped['name']}; {ollama_detail}; inference={probe[1]}"
+            elif llama_ok and not mapped and role == ModelRole.REASONING:
+                # serveris darbojas, bet GGUF fails nav lokalizēts — mēģina inferenci bez faila mapes
+                provider = "llama.cpp"
+                base = self.settings.llama_base_url
+                probe = await self._probe_inference_openai(base)
+                available = probe[0]
+                details = f"Serveris bez lokalizēta GGUF mapē; inference={probe[1]}"
             elif not mapped:
-                details = "Nav atrasts GGUF fails šai lomai"
+                details = "Nav atrasts GGUF fails šai lomai un nav pierādīta inference"
             else:
                 details = f"Modelis atrasts ({mapped['name']}), bet lokālā inference nav pieejama"
             results.append(
@@ -78,6 +96,8 @@ class ModelRouter:
                     checked_at=utc_now(),
                 )
             )
+        self._health_cache = results
+        self._health_cache_at = time.time()
         return results
 
     async def complete(
@@ -91,22 +111,28 @@ class ModelRouter:
     ) -> dict[str, Any]:
         if role == ModelRole.NONE:
             return {"ok": True, "text": "", "provider": "none"}
-        health = {h.role: h for h in await self.health()}
-        status = health.get(role)
-        if not status or not status.available:
-            return {
-                "ok": False,
-                "text": "",
-                "error": status.details if status else "Modeļa loma nav pieejama",
-                "provider": None,
-            }
+        # Neizmanto mākoņa rezerves; ja lokāli nav — godīga kļūda
+        llama_ok, _ = await self._probe_openai_compatible(self.settings.llama_base_url)
+        ollama_ok, _ = await self._probe_ollama(self.settings.ollama_base_url)
+        mapped = self._role_models.get(role)
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        if status.provider == "llama.cpp":
+        if llama_ok:
             return await self._chat_openai(self.settings.llama_base_url, messages, temperature, max_tokens)
-        return await self._chat_ollama(self.settings.ollama_base_url, status.model_name or "local", messages)
+        if ollama_ok:
+            model_name = (mapped or {}).get("name") or "local"
+            return await self._chat_ollama(self.settings.ollama_base_url, model_name, messages)
+        return {
+            "ok": False,
+            "text": "",
+            "error": (
+                "Lokālais modelis nav pieejams. Uzstādiet llama-server vai Ollama un GGUF modeli. "
+                "Mākoņa API netiek izmantots."
+            ),
+            "provider": None,
+        }
 
     async def _probe_openai_compatible(self, base_url: str) -> tuple[bool, str]:
         url = base_url.rstrip("/") + "/models"
@@ -129,6 +155,33 @@ class ModelRouter:
                 return False, f"Ollama statuss {resp.status_code}"
         except Exception as exc:  # noqa: BLE001
             return False, f"Ollama nav sasniedzams: {exc}"
+
+    async def _probe_inference_openai(self, base_url: str) -> tuple[bool, str]:
+        try:
+            result = await self._chat_openai(
+                base_url,
+                [{"role": "user", "content": "Atbildi ar vienu vārdu: OK"}],
+                temperature=0.0,
+                max_tokens=8,
+            )
+            if result.get("ok") and str(result.get("text") or "").strip():
+                return True, "īsa inference OK"
+            return False, str(result.get("error") or "tukša atbilde")
+        except Exception as exc:  # noqa: BLE001
+            return False, f"inference kļūda: {exc}"
+
+    async def _probe_inference_ollama(self, base_url: str, model: str) -> tuple[bool, str]:
+        try:
+            result = await self._chat_ollama(
+                base_url,
+                model,
+                [{"role": "user", "content": "Atbildi ar vienu vārdu: OK"}],
+            )
+            if result.get("ok") and str(result.get("text") or "").strip():
+                return True, "īsa inference OK"
+            return False, str(result.get("error") or "tukša atbilde")
+        except Exception as exc:  # noqa: BLE001
+            return False, f"inference kļūda: {exc}"
 
     async def _chat_openai(
         self,

@@ -23,7 +23,6 @@ public sealed class ApiClient
 
     public async Task<HealthResponseDto?> GetHealthAsync()
     {
-        // health bez auth
         using var client = new HttpClient { BaseAddress = _http.BaseAddress };
         return await client.GetFromJsonAsync<HealthResponseDto>("/health", JsonOptions);
     }
@@ -41,11 +40,7 @@ public sealed class ApiClient
         return await JsonSerializer.DeserializeAsync<JsonElement>(stream, JsonOptions);
     }
 
-    public async Task StopAsync()
-    {
-        await _http.PostAsync("/control/stop", null);
-    }
-
+    public async Task StopAsync() => await _http.PostAsync("/control/stop", null);
     public async Task PauseAsync() => await _http.PostAsync("/control/pause", null);
     public async Task ResumeAsync() => await _http.PostAsync("/control/resume", null);
 
@@ -56,7 +51,7 @@ public sealed class ApiClient
 
     public async Task DecideApprovalAsync(string id, string decision)
     {
-        await _http.PostAsync($"/approvals/{id}/decide?decision={decision}", null);
+        await _http.PostAsync($"/approvals/{id}/decide?decision={Uri.EscapeDataString(decision)}", null);
     }
 
     public async Task SaveLayoutAsync(object layout)

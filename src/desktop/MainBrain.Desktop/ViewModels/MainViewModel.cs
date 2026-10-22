@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Text.Json;
+using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MainBrain.Contracts;
@@ -25,22 +26,35 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _inspectorText = "Izvēlieties aģentu vai palaidiet uzdevumu.";
     [ObservableProperty] private string _workspacePath = "";
     [ObservableProperty] private string _browserUrl = "https://example.com";
-    [ObservableProperty] private string _currentPanelKind = "Žurnāls";
+    [ObservableProperty] private string _currentPanelKind = "Iegultais pārlūks";
+    [ObservableProperty] private string _focusSource = "browser";
+    [ObservableProperty] private bool _focusPinned;
+    [ObservableProperty] private string? _liveImagePath;
+    [ObservableProperty] private string _editorText = "# Main Brain OS redaktors\n";
+    [ObservableProperty] private string _navSection = "Main Brain";
 
     public ObservableCollection<AgentDefinitionDto> Agents { get; } = new();
     public ObservableCollection<string> Sections { get; } = new();
     public ObservableCollection<ApprovalRequestDto> Approvals { get; } = new();
     public ObservableCollection<ProgressEventDto> Timeline { get; } = new();
     public ObservableCollection<WorkPanelViewModel> Panels { get; } = new();
+    public ObservableCollection<string> NavItems { get; } = new()
+    {
+        "Main Brain", "Aģenti", "Projekti", "Aktīvie uzdevumi", "Atmiņa", "Modeļu pārvaldība", "Darbību vēsture", "Iestatījumi",
+    };
+
+    public Visibility FocusVisibility => IsFocusMode ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility MultiVisibility => IsFocusMode ? Visibility.Collapsed : Visibility.Visible;
 
     public MainViewModel(ApiClient api)
     {
         _api = api;
         WorkspacePath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-        Panels.Add(new WorkPanelViewModel("Žurnāls", "log"));
-        Panels.Add(new WorkPanelViewModel("Iegultais pārlūks", "embedded_browser"));
-        Panels.Add(new WorkPanelViewModel("Redaktors", "editor"));
-        Panels.Add(new WorkPanelViewModel("Terminālis", "terminal"));
+        Panels.Add(new WorkPanelViewModel("Iegultais pārlūks", "embedded_browser") { IsVisible = true });
+        Panels.Add(new WorkPanelViewModel("Redaktors", "editor") { IsVisible = true });
+        Panels.Add(new WorkPanelViewModel("Terminālis", "terminal") { IsVisible = true });
+        Panels.Add(new WorkPanelViewModel("Dzīvais attēls", "live_image") { IsVisible = true });
+        Panels.Add(new WorkPanelViewModel("Aģentu aktivitāte", "log") { IsVisible = true });
     }
 
     public async Task InitializeAsync()
@@ -57,7 +71,10 @@ public partial class MainViewModel : ObservableObject
 
             StatusText = health.EmergencyStop ? "STOP aktīvs" : "Lokāli aktīvs";
             IsOffline = false;
-            ActiveModel = health.Models.FirstOrDefault(m => m.Available)?.ModelName ?? "Nav konfigurēts";
+            ActiveModel = health.Models.FirstOrDefault(m => m.Available)?.ModelName
+                          ?? health.Models.FirstOrDefault()?.Details
+                          ?? "Nav konfigurēts";
+            ResourceText = "Resursi: skatīt diagnostiku";
             var agents = await _api.GetAgentsAsync();
             Agents.Clear();
             Sections.Clear();
@@ -72,7 +89,8 @@ public partial class MainViewModel : ObservableObject
             }
 
             await RefreshApprovalsAsync();
-            InspectorText = $"Ielādēti {Agents.Count} aģenti.";
+            await LoadLayoutAsync();
+            InspectorText = $"Ielādēti {Agents.Count} aģenti. Režīms: {(IsFocusMode ? "Focus" : "Multi")}.";
         }
         catch (Exception ex)
         {
@@ -81,11 +99,50 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    partial void OnIsFocusModeChanged(bool value)
+    {
+        OnPropertyChanged(nameof(FocusVisibility));
+        OnPropertyChanged(nameof(MultiVisibility));
+        CurrentPanelKind = value ? $"Focus: {FocusSource}" : "Vairāku logu režīms";
+        _ = SaveLayoutAsync();
+    }
+
+    [RelayCommand]
+    private void SetFocusMode()
+    {
+        IsFocusMode = true;
+    }
+
+    [RelayCommand]
+    private void SetMultiMode()
+    {
+        IsFocusMode = false;
+    }
+
     [RelayCommand]
     private void ToggleMode()
     {
         IsFocusMode = !IsFocusMode;
-        CurrentPanelKind = IsFocusMode ? "Fokusa darba zona" : "Vairāku logu režīms";
+    }
+
+    [RelayCommand]
+    private void SelectFocusSource(string? source)
+    {
+        if (string.IsNullOrWhiteSpace(source) || FocusPinned)
+        {
+            return;
+        }
+
+        FocusSource = source;
+        CurrentPanelKind = $"Focus: {source}";
+        _ = SaveLayoutAsync();
+    }
+
+    [RelayCommand]
+    private void ToggleFocusPin()
+    {
+        FocusPinned = !FocusPinned;
+        _ = SaveLayoutAsync();
     }
 
     [RelayCommand]
@@ -105,9 +162,13 @@ public partial class MainViewModel : ObservableObject
                 Text = ChatInput,
                 WorkspacePath = string.IsNullOrWhiteSpace(WorkspacePath) ? null : WorkspacePath,
             });
-            ChatOutput += "\n" + result.GetRawText();
+            ChatOutput += "\n" + SummarizeGoal(result);
             TerminalOutput += $"\n[{DateTime.Now:HH:mm:ss}] Mērķis pabeigts";
-            InspectorText = "Uzdevuma rezultāts saņemts. Skatiet notikumu laika līniju.";
+            InspectorText = "Uzdevuma rezultāts saņemts.";
+            if (!FocusPinned)
+            {
+                FocusSource = "log";
+            }
         }
         catch (Exception ex)
         {
@@ -117,6 +178,7 @@ public partial class MainViewModel : ObservableObject
         {
             ActiveJobs = Math.Max(0, ActiveJobs - 1);
             ChatInput = "";
+            await RefreshApprovalsAsync();
         }
     }
 
@@ -125,7 +187,7 @@ public partial class MainViewModel : ObservableObject
     {
         await _api.StopAsync();
         StatusText = "STOP aktīvs";
-        ChatOutput += "\n[STOP] Jaunas darbības liegtas.";
+        ChatOutput += "\n[STOP] Jaunas darbības liegtas; automatizācija apturēta.";
     }
 
     [RelayCommand]
@@ -149,6 +211,19 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private async Task DecideApprovalAsync(string? decision)
+    {
+        var pending = Approvals.FirstOrDefault(a => a.Status == "pending");
+        if (pending is null || string.IsNullOrWhiteSpace(decision))
+        {
+            return;
+        }
+
+        await _api.DecideApprovalAsync(pending.Id, decision);
+        await RefreshApprovalsAsync();
+    }
+
+    [RelayCommand]
     private async Task InvokeSelectedAgentAsync()
     {
         if (SelectedAgent is null)
@@ -159,6 +234,57 @@ public partial class MainViewModel : ObservableObject
         InspectorText = $"Izsaucu {SelectedAgent.Name}...";
         ChatInput = $"Izpildi aģenta {SelectedAgent.Name} uzdevumu: {SelectedAgent.Description}";
         await SendGoalAsync();
+    }
+
+    [RelayCommand]
+    private async Task SaveLayoutAsync()
+    {
+        var payload = new
+        {
+            mode = IsFocusMode ? "focus" : "multi",
+            focus_source = FocusSource,
+            focus_pinned = FocusPinned,
+            theme = "dark",
+            workspace = WorkspacePath,
+            panels = Panels.Select(p => new { p.Title, p.Kind, p.IsVisible, p.IsPinned }).ToList(),
+        };
+        await _api.SaveLayoutAsync(payload);
+    }
+
+    private async Task LoadLayoutAsync()
+    {
+        try
+        {
+            var layout = await _api.GetLayoutAsync();
+            if (layout.ValueKind != JsonValueKind.Object)
+            {
+                return;
+            }
+
+            if (layout.TryGetProperty("mode", out var mode))
+            {
+                IsFocusMode = mode.GetString() != "multi";
+            }
+
+            if (layout.TryGetProperty("focus_source", out var src))
+            {
+                FocusSource = src.GetString() ?? FocusSource;
+            }
+
+            if (layout.TryGetProperty("focus_pinned", out var pinned) && pinned.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                FocusPinned = pinned.GetBoolean();
+            }
+
+            if (layout.TryGetProperty("workspace", out var ws) && !string.IsNullOrWhiteSpace(ws.GetString()))
+            {
+                WorkspacePath = ws.GetString()!;
+            }
+        }
+        catch
+        {
+            // pirmā palaišana
+        }
     }
 
     partial void OnSelectedAgentChanged(AgentDefinitionDto? value)
@@ -176,6 +302,21 @@ public partial class MainViewModel : ObservableObject
             $"Rīki: {string.Join(", ", value.AllowedTools)}\n" +
             $"Ierobežojumi:\n- {string.Join("\n- ", value.Constraints)}";
     }
+
+    private static string SummarizeGoal(JsonElement result)
+    {
+        try
+        {
+            var status = result.TryGetProperty("status", out var s) ? s.GetString() : "?";
+            var plan = result.TryGetProperty("plan", out var p) ? p : default;
+            var tasks = plan.ValueKind == JsonValueKind.Object && plan.TryGetProperty("tasks", out var t) ? t.GetArrayLength() : 0;
+            return $"Statuss: {status}; uzdevumi: {tasks}";
+        }
+        catch
+        {
+            return result.GetRawText();
+        }
+    }
 }
 
 public partial class WorkPanelViewModel : ObservableObject
@@ -189,5 +330,7 @@ public partial class WorkPanelViewModel : ObservableObject
     [ObservableProperty] private string _title;
     [ObservableProperty] private string _kind;
     [ObservableProperty] private bool _isPinned;
+    [ObservableProperty] private bool _isVisible = true;
     [ObservableProperty] private string _content = "";
+    [ObservableProperty] private string _status = "aktīvs";
 }

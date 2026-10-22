@@ -1,76 +1,60 @@
 # BUILD_STATUS — Main Brain OS
 
-**Atjaunināts:** 2026-10-21  
-**Sesijas mērķis:** pilna specifikācijas implementācija  
-**Vide:** Linux CI/dev (WPF palaišana bloķēta)
+**Atjaunināts:** 2026-10-22  
+**Zars:** `cursor/main-brain-os-full-impl`  
+**Vide:** Linux (WPF/UIA palaišana BLOĶĒTA)
 
-## Paveikts
+## Šīs sesijas paveiktais (turpinājums, nevis pārrakstīšana)
 
-### Backend (Python) — funkcionē
-- [x] Tipizētie līgumi (`UserGoal`, `Plan`, `TaskNode`, …)
-- [x] FastAPI lokālais API + WebSocket + Bearer auth
-- [x] PolicyEngine ārpus LLM (STOP, apstiprinājumi, ceļu kanonizācija)
-- [x] ToolProxy ar visiem specifikācijas rīkiem
-- [x] ModelRouter (llama.cpp / Ollama) ar godīgu health
-- [x] MemoryStore SQLite WAL + FTS5 + layout persistēšana
-- [x] LearningEngine (metrikas, ranžēšana, LoRA eksporta vārti)
-- [x] ResourceScheduler (aģentu/LLM/browser semafori, failu slēdzenes)
-- [x] MainBrain LangGraph orķestrators (DAG, paralēlisms, verify, memory)
-- [x] **Visi 50 aģenti** reģistrā ar līgumiem, rīkiem un izpildītājiem
-- [x] CSV inventāra pieņemšanas plūsma (F)
+### Audits
+- [x] `docs/IMPLEMENTATION_AUDIT.md`
 
-### Desktop (C# WPF) — pirmkods ieviests
-- [x] `MainBrain.Desktop` WPF MVVM (LV UI, Focus/Multi, WebView2, STOP)
-- [x] `MainBrain.WinAutomation` (UIA/Input/Capture līgumi + Windows P/Invoke)
-- [x] `MainBrain.Contracts` DTO
-- [x] BackendHost + ApiClient
-- [ ] Windows kompilācija/palaišana šajā vidē — **BLOĶĒTS**
+### Windows vadība (īsta implementācija)
+- [x] `UiAutomationService` — FlaUI UIA3 (query/invoke/set_value/tree/find_window), `performed` tikai pēc darbības
+- [x] `InputService` — SendInput (move/click/type/shortcut), ekskluzīvs owner, STOP
+- [x] `WindowCaptureService` — PrintWindow/BitBlt, PNG kadrs; `live_image` tikai ar failu
+- [x] `ToolBridgeServer` (Named Pipe) + Python `DesktopToolBridge`
+- [x] ToolProxy Windows/browser rīki caur tiltu (bez fake queued navigācijas)
 
-### Skripti / docs / fixtures
-- [x] `scripts/setup_windows.ps1`, `start_dev.ps1`, `build_release.ps1`, `run_acceptance.ps1`
-- [x] docs: ARCHITECTURE, INSTALL_LV, USER_GUIDE_LV, SECURITY, REQUIREMENTS, TEST_REPORT
-- [x] fixtures/sample_inventory_task
-- [x] models/README.md, installer/README.md
+### Drošība
+- [x] Noņemts `/auth/token` (404) — tokens tikai no vides/DesktopHost
+- [x] WebSocket auth ar pirmo JSON ziņojumu (nav tokena URL)
+- [x] `execution_policy` čaulai/Python kodam
+- [x] STOP aptur owned procesus + bridge stop
 
-## Pārbaudes rezultāti
+### Main Brain
+- [x] `AiPlanner` — LLM JSON plāns ar shēmas/aģentu validāciju + rezerves DAG
+- [x] Atmiņas hinti plānošanā
+- [x] Labošanas cikls (test → fix → retest) orķestratorā
+- [x] ModelRouter — īsta īsa inference pārbaude (ne tikai `/models`)
+
+### Desktop UI
+- [x] Focus/Multi **īsta** Visibility pārslēgšana
+- [x] Focus avotu izvēle + fiksēšana
+- [x] Layout saglabāšana/ielāde
+- [x] WebView2 `BrowserAutomationService`
+- [x] BackendHost portatīvie ceļi (`runtime-venv`, `backend/`)
+
+## Testi
 
 | Pārbaude | Statuss |
 |----------|---------|
-| `pytest tests/python` | **21 passed** |
-| `dotnet build MainBrain.Contracts` | **OK** |
-| API smoke `/health` + `/agents` | **OK (50)** |
-| `dotnet build MainBrain.Desktop` | **BLOĶĒTS** (nav Windows/WPF) |
-| WebView2 / UIA / Notepad E2E | **BLOĶĒTS** (nav Windows) |
-| llama-server inference | **BLOĶĒTS** (modelis/serveris nav uzstādīts) |
+| `pytest tests/python` | **28 passed** |
+| Contracts `dotnet test` | OK (iepriekš) |
+| WPF/UIA/Notepad/WebView2 E2E | **BLOĶĒTS** |
+| Laidiena palaišana ārpus repo | **BLOĶĒTS** |
+| Lokāla modeļa inference | **BLOĶĒTS** (nav servera/modeļa) |
 
-## Atlikušais darbs nākamajai sesijai (Windows mašīnā)
+## Atlikušais (tikai Windows mašīnā)
 
-1. Palaist `./scripts/setup_windows.ps1`
-2. `dotnet build MainBrainOS.sln -c Release` un labot jebkuras WPF/WebView2 kļūdas
-3. `./scripts/build_release.ps1` → pārbaudīt `release/win-x64/MainBrain.exe`
-4. Manuāli izpildīt pieņemšanas E, D, C (Notepad UIA, WebView2, paneļu režīmi)
-5. Uzstādīt GGUF + `llama-server`, pārbaudīt J (bezsaistes inference)
-6. Papildināt `docs/TEST_REPORT.md` ar Windows pierādījumiem
+1. `./scripts/setup_windows.ps1` + `dotnet build MainBrainOS.sln`
+2. Labot jebkuras FlaUI/WPF restore kļūdas
+3. `./scripts/build_release.ps1` un E2E D–H, L
+4. Pieslēgt llama-server + GGUF → Tests B/J
+5. Aizpildīt `WINDOWS_VALIDATION.md` / `RELEASE_VERIFICATION.md` ar pierādījumiem
 
-## Kā turpināt nekavējoties
+## Svarīgi
 
-```powershell
-cd <repo>
-./scripts/setup_windows.ps1
-./scripts/run_acceptance.ps1
-./scripts/start_dev.ps1
-```
-
-Linux turpinājumam:
-
-```bash
-python3 -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
-pytest -q tests/python
-```
-
-## Svarīgi ierobežojumi (godīgi)
-
-- Šī sesija **neapgalvo**, ka WPF GUI ir palaists šajā Linux vidē.
-- Windows Graphics Capture / UIA atgriež `unavailable` ārpus Windows — tas ir paredzēts.
-- Bez lokāla modeļa LLM papildinājums ir nepieejams; aģentu determinētie ceļi darbojas.
+- 50 aģentu ID **nav** mainīti.
+- Linuxā Windows rīki godīgi atgriež `unavailable` / `performed=false`.
+- Netiek apgalvots, ka Notepad/WebView2 E2E ir TESTĒTS šajā vidē.

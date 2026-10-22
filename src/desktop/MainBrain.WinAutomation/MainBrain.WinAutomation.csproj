@@ -3,13 +3,16 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <UseWPF>false</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>MainBrain.WinAutomation</RootNamespace>
     <Platforms>x64</Platforms>
     <Description>UI Automation, ievade un logu attēlu uztveršana</Description>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Drawing.Common" Version="8.0.11" />
+    <PackageReference Include="FlaUI.Core" Version="4.0.0" />
+    <PackageReference Include="FlaUI.UIA3" Version="4.0.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\MainBrain.Contracts\MainBrain.Contracts.csproj" />

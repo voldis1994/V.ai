@@ -1,47 +1,39 @@
 # Testu pārskats
 
-**Datums:** 2026-10-21  
-**Vide:** Linux x86_64, Python 3.12.3, .NET SDK 8.0.426 (bez WPF workload)
+**Datums:** 2026-10-22  
+**Zars:** `cursor/main-brain-os-full-impl`  
+**Vide:** Linux x86_64, Python 3.12
 
 ## Automatizētie Python testi
-
-Komanda:
 
 ```bash
 .venv/bin/pytest -q tests/python
 ```
 
-**Rezultāts: 21 passed**
+**Rezultāts: 28 passed**
 
-| Tests | Segums |
-|-------|--------|
-| `test_registry.py` | 50 unikāli aģenti, 10 nodaļas, līgumi |
-| `test_policy.py` | STOP, apstiprinājumi, ceļi ārpus mapes, redaction |
-| `test_tools_and_agents.py` | failu rīki, 50 aģentu izsaukums, CSV plūsma, failu slēdzenes |
-| `test_api_and_brain.py` | health, auth, `/goals/run`, layout, metrics, STOP |
-| `test_prompt_injection.py` | tīmekļa/uzvednes saturs nav privileģētas komandas |
+Jaunie/papildinātie:
+- `test_planner_and_security.py` — AI plānotāja fallback, execution policy, bridge unavailable, `/auth/token` noņemts
+- Esošie reģistra/API/CSV/STOP/injekcijas testi saglabāti
 
-## .NET
+## Windows E2E (A–L)
 
-```bash
-dotnet build src/desktop/MainBrain.Contracts/MainBrain.Contracts.csproj -c Release
-```
+| Tests | Statuss | Piezīme |
+|-------|---------|---------|
+| A 50 aģenti (API) | TESTĒTS | 50 unikāli |
+| A 50 aģenti (GUI) | BLOĶĒTS | Nav Windows |
+| B Lokālais modelis | BLOĶĒTS | Nav llama-server |
+| C Python CSV | TESTĒTS | pytest plūsma |
+| D Notepad | BLOĶĒTS | Nav Windows |
+| E Capture | BLOĶĒTS | Nav Windows |
+| F Focus Mode | IEVIESTS / BLOĶĒTS GUI | Kods ir; nav Windows |
+| G Multi-Window | IEVIESTS / BLOĶĒTS GUI | Kods ir; nav Windows |
+| H Pārlūks | IEVIESTS / BLOĶĒTS GUI | WebView2 serviss |
+| I Drošība | TESTĒTS (API/policy) | Auth token endpoint removed |
+| J Atmiņa/layout | TESTĒTS (API) | layout persist |
+| K Bez interneta + modelis | BLOĶĒTS | Nav modeļa |
+| L Laidiens | BLOĶĒTS | Nav Windows publish |
 
-**Rezultāts: Build succeeded**
+## Godīguma piezīme
 
-`MainBrain.Desktop` (WPF) un `MainBrain.WinAutomation` (`net8.0-windows`) — **BLOĶĒTS** šajā Linux vidē (nav Windows + WPF workload). Windows komandas:
-
-```powershell
-./scripts/setup_windows.ps1
-./scripts/run_acceptance.ps1
-./scripts/build_release.ps1
-```
-
-## Pieņemšanas kritēriji (A–M)
-
-Skatīt `docs/REQUIREMENTS_CHECKLIST.md` un `docs/BUILD_STATUS.md`.
-
-## Smoke pārbaude
-
-- `/health` → `status=ok`, `agents=50`
-- `/agents` ar Bearer token → 50 ieraksti
+`IEVIESTS` ≠ `TESTĒTS`. Windows GUI testi nav izdomāti kā veiksmīgi.

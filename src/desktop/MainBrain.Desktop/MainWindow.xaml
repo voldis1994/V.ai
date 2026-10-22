@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="{Binding Title}"
-        Width="1440" Height="900"
+        Width="1480" Height="920"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource BgBrush}"
         Foreground="{StaticResource TextBrush}">
@@ -18,20 +18,8 @@
         <StackPanel Orientation="Horizontal">
           <TextBlock Text="Main Brain OS" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,16,0"/>
           <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Margin="0,0,12,0"/>
-          <TextBlock Text="{Binding ActiveModel}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+          <TextBlock Text="{Binding ActiveModel}" VerticalAlignment="Center" Margin="0,0,12,0" MaxWidth="320" TextTrimming="CharacterEllipsis"/>
           <TextBlock Text="{Binding ResourceText}" VerticalAlignment="Center" Margin="0,0,12,0"/>
-          <TextBlock VerticalAlignment="Center">
-            <TextBlock.Style>
-              <Style TargetType="TextBlock">
-                <Setter Property="Text" Value="Lokāli aktīvs"/>
-                <Style.Triggers>
-                  <DataTrigger Binding="{Binding IsOffline}" Value="True">
-                    <Setter Property="Text" Value="Bezsaistē"/>
-                  </DataTrigger>
-                </Style.Triggers>
-              </Style>
-            </TextBlock.Style>
-          </TextBlock>
           <TextBlock Text="{Binding ActiveJobs, StringFormat=Aktīvie darbi: {0}}" Margin="12,0,0,0" VerticalAlignment="Center"/>
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal">
@@ -42,8 +30,8 @@
       </Grid>
     </Border>
 
-    <!-- Apakšējais čats / terminālis -->
-    <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBrush}" Padding="8" Height="220">
+    <!-- Apakšējais panelis -->
+    <Border DockPanel.Dock="Bottom" Background="{StaticResource PanelBrush}" Padding="8" Height="230">
       <Grid>
         <Grid.RowDefinitions>
           <RowDefinition Height="*"/>
@@ -59,17 +47,25 @@
                      Background="#020617" Foreground="#86EFAC"/>
           </TabItem>
           <TabItem Header="Apstiprinājumi">
-            <ListBox ItemsSource="{Binding Approvals}">
-              <ListBox.ItemTemplate>
-                <DataTemplate>
-                  <StackPanel>
-                    <TextBlock Text="{Binding Action}" FontWeight="Bold"/>
-                    <TextBlock Text="{Binding Reason}" TextWrapping="Wrap"/>
-                    <TextBlock Text="{Binding Impact}" Opacity="0.8"/>
-                  </StackPanel>
-                </DataTemplate>
-              </ListBox.ItemTemplate>
-            </ListBox>
+            <DockPanel>
+              <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal">
+                <Button Content="Atļaut vienreiz" Command="{Binding DecideApprovalCommand}" CommandParameter="allowed_once"/>
+                <Button Content="Atļaut uzdevumam" Command="{Binding DecideApprovalCommand}" CommandParameter="allowed_task"/>
+                <Button Content="Noraidīt" Command="{Binding DecideApprovalCommand}" CommandParameter="rejected"/>
+              </StackPanel>
+              <ListBox ItemsSource="{Binding Approvals}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <StackPanel>
+                      <TextBlock Text="{Binding Action}" FontWeight="Bold"/>
+                      <TextBlock Text="{Binding Reason}" TextWrapping="Wrap"/>
+                      <TextBlock Text="{Binding Impact}" Opacity="0.8"/>
+                      <TextBlock Text="{Binding Status}" Opacity="0.7"/>
+                    </StackPanel>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </DockPanel>
           </TabItem>
         </TabControl>
         <DockPanel Grid.Row="1" Margin="0,8,0,0">
@@ -81,16 +77,14 @@
     </Border>
 
     <!-- Kreisā navigācija -->
-    <Border DockPanel.Dock="Left" Width="280" Background="{StaticResource PanelBrush}" Padding="8">
+    <Border DockPanel.Dock="Left" Width="290" Background="{StaticResource PanelBrush}" Padding="8">
       <DockPanel>
         <TextBlock DockPanel.Dock="Top" Text="Navigācija" FontWeight="Bold" Margin="0,0,0,8"/>
+        <ListBox DockPanel.Dock="Top" ItemsSource="{Binding NavItems}" SelectedItem="{Binding NavSection}" Height="140" Margin="0,0,0,8"/>
         <TextBlock DockPanel.Dock="Top" Text="Darba mape:" Margin="0,0,0,4"/>
         <TextBox DockPanel.Dock="Top" Text="{Binding WorkspacePath}" Margin="0,0,0,8"/>
         <TextBlock DockPanel.Dock="Top" Text="50 aģenti" FontWeight="SemiBold" Margin="0,0,0,4"/>
         <ListBox ItemsSource="{Binding Agents}" SelectedItem="{Binding SelectedAgent}">
-          <ListBox.GroupStyle>
-            <GroupStyle/>
-          </ListBox.GroupStyle>
           <ListBox.ItemTemplate>
             <DataTemplate>
               <StackPanel>
@@ -123,53 +117,135 @@
         <RowDefinition Height="*"/>
       </Grid.RowDefinitions>
       <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-        <Button Content="Fokusa režīms" Command="{Binding ToggleModeCommand}"/>
-        <Button Content="Vairāku logu režīms" Command="{Binding ToggleModeCommand}"/>
+        <Button Content="Fokusa režīms" Command="{Binding SetFocusModeCommand}"/>
+        <Button Content="Vairāku logu režīms" Command="{Binding SetMultiModeCommand}"/>
+        <Button Content="Fiksēt paneli" Command="{Binding ToggleFocusPinCommand}"/>
         <TextBlock Text="{Binding CurrentPanelKind}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+        <TextBlock Text="{Binding FocusPinned, StringFormat=Fiksēts: {0}}" VerticalAlignment="Center" Margin="12,0,0,0"/>
       </StackPanel>
-      <Grid Grid.Row="1">
+
+      <!-- FOCUS MODE -->
+      <Grid Grid.Row="1" Visibility="{Binding FocusVisibility}">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+          <Button Content="Pārlūks" Command="{Binding SelectFocusSourceCommand}" CommandParameter="browser"/>
+          <Button Content="Redaktors" Command="{Binding SelectFocusSourceCommand}" CommandParameter="editor"/>
+          <Button Content="Terminālis" Command="{Binding SelectFocusSourceCommand}" CommandParameter="terminal"/>
+          <Button Content="Dzīvais attēls" Command="{Binding SelectFocusSourceCommand}" CommandParameter="live"/>
+          <Button Content="Žurnāls" Command="{Binding SelectFocusSourceCommand}" CommandParameter="log"/>
+        </StackPanel>
+        <Grid Grid.Row="1">
+          <Border Background="#020617" Padding="4">
+            <Border.Style>
+              <Style TargetType="Border">
+                <Setter Property="Visibility" Value="Collapsed"/>
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding FocusSource}" Value="browser">
+                    <Setter Property="Visibility" Value="Visible"/>
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </Border.Style>
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Top" Text="Iegultais pārlūks (WebView2)" Margin="0,0,0,4"/>
+              <wv2:WebView2 x:Name="Browser" Source="https://example.com"/>
+            </DockPanel>
+          </Border>
+          <Border Background="#020617" Padding="4">
+            <Border.Style>
+              <Style TargetType="Border">
+                <Setter Property="Visibility" Value="Collapsed"/>
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding FocusSource}" Value="editor">
+                    <Setter Property="Visibility" Value="Visible"/>
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </Border.Style>
+            <TextBox Text="{Binding EditorText}" AcceptsReturn="True" FontFamily="Consolas"
+                     Background="#0B1220" Foreground="#E2E8F0" VerticalScrollBarVisibility="Auto"/>
+          </Border>
+          <Border Background="#020617" Padding="4">
+            <Border.Style>
+              <Style TargetType="Border">
+                <Setter Property="Visibility" Value="Collapsed"/>
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding FocusSource}" Value="terminal">
+                    <Setter Property="Visibility" Value="Visible"/>
+                  </DataTrigger>
+                  <DataTrigger Binding="{Binding FocusSource}" Value="log">
+                    <Setter Property="Visibility" Value="Visible"/>
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </Border.Style>
+            <TextBox Text="{Binding TerminalOutput}" IsReadOnly="True" FontFamily="Consolas"
+                     Background="#020617" Foreground="#86EFAC"/>
+          </Border>
+          <Border Background="#020617" Padding="4">
+            <Border.Style>
+              <Style TargetType="Border">
+                <Setter Property="Visibility" Value="Collapsed"/>
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding FocusSource}" Value="live">
+                    <Setter Property="Visibility" Value="Visible"/>
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </Border.Style>
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Top" Text="Dzīvais attēls / Nav pieejams" Margin="0,0,0,4"/>
+              <Image x:Name="LiveImage" Stretch="Uniform" />
+            </DockPanel>
+          </Border>
+        </Grid>
+      </Grid>
+
+      <!-- MULTI-WINDOW MODE -->
+      <Grid Grid.Row="1" Visibility="{Binding MultiVisibility}">
         <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="2*"/>
-          <ColumnDefinition Width="2*"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
           <RowDefinition Height="2*"/>
           <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- Iegultais pārlūks -->
         <Border Grid.Column="0" Grid.Row="0" Margin="0,0,4,4" Background="#020617" Padding="4">
           <DockPanel>
-            <TextBlock DockPanel.Dock="Top" Text="Iegultais pārlūks (WebView2)" Margin="0,0,0,4"/>
-            <wv2:WebView2 x:Name="Browser" Source="https://example.com"/>
+            <TextBlock DockPanel.Dock="Top" Text="Iegultais pārlūks" Margin="0,0,0,4"/>
+            <wv2:WebView2 x:Name="BrowserMulti" Source="https://example.com"/>
           </DockPanel>
         </Border>
-
-        <!-- Redaktors / žurnāls -->
         <Border Grid.Column="1" Grid.Row="0" Margin="4,0,0,4" Background="#020617" Padding="4">
           <DockPanel>
-            <TextBlock DockPanel.Dock="Top" Text="Redaktors / Dzīvais attēls / Nav pieejams" Margin="0,0,0,4"/>
-            <TextBox AcceptsReturn="True" FontFamily="Consolas" Background="#0B1220" Foreground="#E2E8F0"
-                     Text="# Main Brain OS redaktors&#x0a;# Paneļu tipi: Dzīvais attēls | Iegultais pārlūks | Redaktors | Terminālis | Žurnāls | Nav pieejams"/>
+            <TextBlock DockPanel.Dock="Top" Text="Redaktors" Margin="0,0,0,4"/>
+            <TextBox Text="{Binding EditorText}" AcceptsReturn="True" FontFamily="Consolas"
+                     Background="#0B1220" Foreground="#E2E8F0"/>
           </DockPanel>
         </Border>
-
-        <!-- Paneļu režīms -->
-        <Border Grid.Column="0" Grid.ColumnSpan="2" Grid.Row="1" Background="#020617" Padding="4">
+        <Border Grid.Column="0" Grid.Row="1" Margin="0,4,4,0" Background="#020617" Padding="4">
           <DockPanel>
-            <TextBlock DockPanel.Dock="Top" Text="Paneļi (dokojami / cilnes)" Margin="0,0,0,4"/>
+            <TextBlock DockPanel.Dock="Top" Text="Terminālis" Margin="0,0,0,4"/>
+            <TextBox Text="{Binding TerminalOutput}" IsReadOnly="True" FontFamily="Consolas"
+                     Background="#020617" Foreground="#86EFAC"/>
+          </DockPanel>
+        </Border>
+        <Border Grid.Column="1" Grid.Row="1" Margin="4,4,0,0" Background="#020617" Padding="4">
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Top" Text="Paneļi / aģentu aktivitāte" Margin="0,0,0,4"/>
             <ListBox ItemsSource="{Binding Panels}">
-              <ListBox.ItemsPanel>
-                <ItemsPanelTemplate>
-                  <WrapPanel/>
-                </ItemsPanelTemplate>
-              </ListBox.ItemsPanel>
               <ListBox.ItemTemplate>
                 <DataTemplate>
-                  <Border Background="#1E293B" Padding="10" Margin="4" Width="180">
+                  <Border Background="#1E293B" Padding="10" Margin="4" MinWidth="160">
                     <StackPanel>
                       <TextBlock Text="{Binding Title}" FontWeight="Bold"/>
                       <TextBlock Text="{Binding Kind}"/>
+                      <TextBlock Text="{Binding Status}"/>
                     </StackPanel>
                   </Border>
                 </DataTemplate>
