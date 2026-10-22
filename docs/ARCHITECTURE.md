@@ -9,7 +9,7 @@ Main Brain OS ir lokāls Windows AI vadības centrs ar:
 3. **Main Brain orķestrators** — LangGraph grafs: analīze → plāns/DAG → izpilde → pārbaude → atmiņa.
 4. **Tieši 50 aģenti** — reģistrs ar ID, lomām, rīkiem, līgumiem un izpildītājiem.
 5. **Politiku dzinējs ārpus LLM** — atļaujas, apstiprinājumi, STOP, ceļu kanonizācija.
-6. **Lokālā inference** — llama.cpp (`llama-server`) / Ollama adapteri; nav mākoņa noklusējuma.
+6. **Lokālā inference** — **primāri** llama.cpp (`llama-server` uz `127.0.0.1:8080/v1`); Ollama tikai kā izslēgta-pēc-noklusējuma rezerve; nav mākoņa.
 
 ## Procesu modelis
 
@@ -53,7 +53,7 @@ MainBrain.exe
 | Backend | FastAPI | 0.115.6 |
 | Grafs | LangGraph | 0.2.60 |
 | Dati | SQLite WAL + FTS5 | stdlib/aiosqlite |
-| Modeļi | llama.cpp / Ollama | adapteri |
+| Modeļi | llama.cpp (`llama-server`) primāri; Ollama rezerve | adapteri |
 
 ## Ierobežojumi
 

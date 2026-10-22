@@ -6,8 +6,9 @@
 - .NET 8 LTS SDK
 - Python 3.12+
 - Microsoft Edge WebView2 Runtime
-- (Neobligāti) llama.cpp `llama-server` vai Ollama
-- (Neobligāti) GGUF modeļi
+- **llama.cpp `llama-server`** — **primārā** lokālā AI (bootstrap to uzstāda)
+- GGUF modeļi — ieteicams lejupielādēt (bat opcijas 4–6)
+- Ollama — **NAV** obligāta; tikai rezerve ar `MAINBRAIN_OLLAMA_ENABLED=true`
 
 ## Ātrā uzstādīšana (ieteicams)
 

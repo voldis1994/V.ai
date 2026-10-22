@@ -12,6 +12,7 @@ namespace MainBrain.Desktop.Services;
 public sealed class BackendHost : IDisposable
 {
     private Process? _process;
+    private Process? _llamaProcess;
     private ToolBridgeServer? _bridge;
     private readonly UiAutomationService _uia = new();
     private readonly InputService _input = new();
@@ -33,6 +34,9 @@ public sealed class BackendHost : IDisposable
         _bridge = new ToolBridgeServer(Token, _uia, _input, _capture, browserHandler);
         _bridge.Start();
 
+        // Primārā AI: llama.cpp (ne Ollama)
+        TryStartLlamaServer(dataDir);
+
         var root = ResolveAppRoot();
         var python = ResolvePython(root);
         var psi = new ProcessStartInfo
@@ -48,6 +52,9 @@ public sealed class BackendHost : IDisposable
         psi.Environment["MAINBRAIN_API_TOKEN"] = Token;
         psi.Environment["MAINBRAIN_BRIDGE_TOKEN"] = Token;
         psi.Environment["MAINBRAIN_DATA_DIR"] = dataDir;
+        psi.Environment["MAINBRAIN_OLLAMA_ENABLED"] = "false";
+        psi.Environment["MAINBRAIN_PRIMARY_PROVIDER"] = "llama.cpp";
+        psi.Environment["MAINBRAIN_LLAMA_BASE_URL"] = "http://127.0.0.1:8080/v1";
 
         var backendPath = Path.Combine(root, "backend");
         var srcBackend = Path.Combine(root, "src", "backend");
@@ -94,7 +101,90 @@ public sealed class BackendHost : IDisposable
             catch { /* ignore */ }
         }
 
+        if (_llamaProcess is not null && !_llamaProcess.HasExited)
+        {
+            try { _llamaProcess.Kill(entireProcessTree: true); }
+            catch { /* ignore */ }
+        }
+
         await Task.CompletedTask;
+    }
+
+    private void TryStartLlamaServer(string dataDir)
+    {
+        try
+        {
+            using var probe = new HttpClient { Timeout = TimeSpan.FromSeconds(1) };
+            var existing = probe.GetAsync("http://127.0.0.1:8080/v1/models").GetAwaiter().GetResult();
+            if ((int)existing.StatusCode < 500)
+            {
+                return; // jau darbojas
+            }
+        }
+        catch
+        {
+            // startēsim paši
+        }
+
+        var exe = Path.Combine(dataDir, "llama", "llama-server.exe");
+        if (!File.Exists(exe))
+        {
+            return;
+        }
+
+        var model = ResolveGguf(Path.Combine(dataDir, "models"));
+        if (model is null)
+        {
+            return;
+        }
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = exe,
+            Arguments = $"-m \"{model}\" --host 127.0.0.1 --port 8080 -c 4096",
+            WorkingDirectory = Path.GetDirectoryName(exe)!,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        _llamaProcess = Process.Start(psi);
+    }
+
+    private static string? ResolveGguf(string modelsDir)
+    {
+        var roles = Path.Combine(modelsDir, "roles.json");
+        if (File.Exists(roles))
+        {
+            var json = File.ReadAllText(roles);
+            foreach (var key in new[] { "reasoning", "coding" })
+            {
+                var marker = $"\"{key}\":\"";
+                var idx = json.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                if (idx < 0)
+                {
+                    continue;
+                }
+
+                var start = idx + marker.Length;
+                var end = json.IndexOf('"', start);
+                if (end > start)
+                {
+                    var path = json[start..end].Replace("\\\\", "\\");
+                    if (File.Exists(path))
+                    {
+                        return path;
+                    }
+                }
+            }
+        }
+
+        if (!Directory.Exists(modelsDir))
+        {
+            return null;
+        }
+
+        return Directory.EnumerateFiles(modelsDir, "*.gguf")
+            .OrderByDescending(f => new FileInfo(f).Length)
+            .FirstOrDefault();
     }
 
     public void Dispose()

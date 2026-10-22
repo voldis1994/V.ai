@@ -8,13 +8,13 @@ echo ============================================
 echo   Main Brain OS — sākuma instalācija
 echo ============================================
 echo.
-echo Šis fails var:
-echo   - uzstādīt .NET 8, Python 3.12+, WebView2, .venv
-echo   - pēc izvēles lejupielādēt GGUF AI modeļus (vairāki GB)
+echo Primārā AI: llama.cpp llama-server + GGUF
+echo Ollama NAV nepieciešama ^(tikai neobligāta rezerve^).
 echo.
-echo Kāpēc modeļi nav "vienmēr automātiski"?
-echo   Jo tie aizņem daudz vietas, ir licences, un vajag Jūsu
-echo   skaidru piekrišanu. Opcijas 4–5 lejupielādē tos uzreiz.
+echo Šis fails:
+echo   - uzstāda .NET 8, Python, WebView2, .venv
+echo   - uzstāda llama-server
+echo   - pēc izvēles lejupielādē GGUF modeļus
 echo.
 
 cd /d "%~dp0"
@@ -90,8 +90,10 @@ if errorlevel 1 (
   exit /b 1
 )
 echo Gatavs.
-echo Modeļi ^(ja lejupielādēti^): %%LOCALAPPDATA%%\MainBrainOS\models
-echo Palaidiet llama-server vai Ollama, lai AI inference būtu aktīva.
+echo llama-server: %%LOCALAPPDATA%%\MainBrainOS\llama
+echo GGUF:         %%LOCALAPPDATA%%\MainBrainOS\models
+echo API:          http://127.0.0.1:8080/v1
+echo Ja serveris nav startējis: scripts\start_llama_server.ps1
 echo.
 pause
 endlocal

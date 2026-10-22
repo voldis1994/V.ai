@@ -14,7 +14,8 @@ param(
     [switch]$AcceptDownloads,
     [switch]$DownloadModels,
     [ValidateSet("light", "standard")]
-    [string]$ModelProfile = "light"
+    [string]$ModelProfile = "light",
+    [switch]$SkipLlamaServer
 )
 
 $ErrorActionPreference = "Stop"
@@ -246,8 +247,26 @@ if (Test-Path (Join-Path $root "MainBrainOS.sln")) {
     }
 }
 
-# --- Modeļi ---
-Write-Step "Lokālie AI modeļi"
+# --- Primārā inference: llama.cpp ---
+Write-Step "llama.cpp llama-server (PRIMĀRAIS AI)"
+if (-not $SkipLlamaServer) {
+    $llamaInstall = Join-Path $root "scripts\install_llama_server.ps1"
+    if (Test-Path $llamaInstall) {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $llamaInstall -AcceptDownloads
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "llama-server instalācija neizdevās — AI inference nebūs, līdz to uzstādīsiet"
+        } else {
+            Write-Ok "llama-server uzstādīts (%LOCALAPPDATA%\MainBrainOS\llama)"
+        }
+    } else {
+        Write-Warn "Nav install_llama_server.ps1"
+    }
+} else {
+    Write-Host "llama-server instalācija izlaista (-SkipLlamaServer)"
+}
+
+# --- GGUF modeļi ---
+Write-Step "GGUF modeļi (llama.cpp)"
 $modelsDir = Join-Path $data "models"
 Ensure-Dir $modelsDir
 Write-Host "Modeļu mape: $modelsDir"
@@ -261,16 +280,16 @@ if ($DownloadModels) {
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "Modeļu lejupielāde beidzās ar kļūdu — pārējā uzstādīšana turpinās"
     }
+    # Palaid llama-server ar lejupielādēto modeli
+    $startLlama = Join-Path $root "scripts\start_llama_server.ps1"
+    if (Test-Path $startLlama) {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $startLlama -InstallIfMissing
+    }
 } else {
-    Write-Host "GGUF nav lejupielādēti. Palaidiet:"
-    Write-Host "  scripts\download_models.ps1 -Profile light"
-    Write-Host "vai START_MAINBRAIN.bat → opcija ar modeļiem."
+    Write-Host "GGUF nav lejupielādēti. START_MAINBRAIN.bat → opcija 4/5/6"
+    Write-Host "  vai: scripts\download_models.ps1 -Profile light"
 }
-if (Test-Command "ollama") {
-    Write-Ok "Ollama atrasta sistēmā (neobligāts rezerves adapters)"
-} else {
-    Write-Host "Ollama (neobligāti): https://ollama.com/download"
-}
+Write-Host "Ollama NAV nepieciešama. Tā ir tikai neobligāta rezerve (MAINBRAIN_OLLAMA_ENABLED=true)."
 
 # --- Kopsavilkums ---
 Write-Step "Kopsavilkums"

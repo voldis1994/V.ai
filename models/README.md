@@ -1,50 +1,48 @@
-# Lokālie modeļi (GGUF)
+# Lokālie modeļi — llama.cpp (primāri)
 
-Ieteicamā mape Windows:
+Main Brain OS **primārā** AI inference ir **llama.cpp `llama-server`** ar GGUF failiem.
 
-`%LOCALAPPDATA%\MainBrainOS\models`
+**Ollama nav bāze** — tā ir tikai neobligāta rezerve (`MAINBRAIN_OLLAMA_ENABLED=true`).
 
-## Automātiska lejupielāde (ar apstiprinājumu)
+## Windows uzstādīšana
 
 ```bat
 START_MAINBRAIN.bat
 ```
 
-Izvēlieties:
-- **[4]** rīki + GGUF **light** (~2 GB: reasoning, coding, embedding)
-- **[5]** rīki + GGUF **standard** (~6–10 GB: + vision)
-- **[6]** tikai GGUF light
+Ieteicams:
+1. Bootstrap uzstāda **llama-server**
+2. Opcija **[4]/[5]** lejupielādē GGUF
+3. `start_llama_server.ps1` / BackendHost palaiž `http://127.0.0.1:8080/v1`
 
-vai PowerShell:
+Manuāli:
 
 ```powershell
+./scripts/install_llama_server.ps1
 ./scripts/download_models.ps1 -Profile light
-./scripts/download_models.ps1 -Profile standard
+./scripts/start_llama_server.ps1
 ```
 
-Katalogs: `models/manifest.json` (URL, lomas, licences, aptuvenie izmēri).
+Modeļu mape: `%LOCALAPPDATA%\MainBrainOS\models`  
+Serveris: `%LOCALAPPDATA%\MainBrainOS\llama\llama-server.exe`
 
-## Kāpēc tas nav “klusuma” noklusējums?
+## Kāpēc GGUF + llama-server?
 
-1. **Izmērs** — vairāki GB; lēns internets / maz diska.
-2. **Licences** — jāpiekrīt Hugging Face / modeļa licencei.
-3. **Aparatūra** — nekatram datoram der lieli vision/coding modeļi.
-4. **Specifikācija** — aizliegts klusām lejupielādēt gigabaitus bez lietotāja piekrišanas.
+Specifikācija: lokāla OpenAI saderīga saskarne caur **llama-server**, ne mākonis un ne Ollama kā noklusējums.
 
-Ar skaidru izvēli (opcijas 4–6) lejupielāde **ir atļauta un ieviesta**.
+## Lomas pēc faila nosaukuma
 
-## Lomu noteikšana pēc faila nosaukuma
-
-- `*code*` / `*coder*` → coding  
-- `*vision*` / `*vl*` / `moondream*` → vision  
+- `*coder*` / `*code*` → coding  
+- `*vision*` / `moondream*` → vision  
 - `*embed*` → embedding  
 - pārējie → reasoning  
 
-Pēc lejupielādes tiek rakstīts arī `roles.json`.
+## Ollama (rezerve)
 
-## Inference
+Tikai ja apzināti:
 
-1. Palaidiet `llama-server` ar OpenAI saderīgu API uz `http://127.0.0.1:8080`, **vai**
-2. Izmantojiet lokālo Ollama.
+```text
+set MAINBRAIN_OLLAMA_ENABLED=true
+```
 
-**Neregistrējiet Git** lielus `.gguf` failus.
+Bez šī karoga Ollama netiek izmantota.

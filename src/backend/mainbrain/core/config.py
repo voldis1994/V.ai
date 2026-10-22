@@ -24,9 +24,13 @@ class Settings(BaseSettings):
     api_token: str = Field(default_factory=lambda: os.environ.get("MAINBRAIN_API_TOKEN", ""))
     data_dir: Path = Field(default_factory=_default_data_dir)
     workspace_root: Path | None = None
+    # Primārā inference: llama.cpp (llama-server). Ollama — tikai neobligāta rezerve.
+    primary_provider: str = "llama.cpp"
     llama_base_url: str = "http://127.0.0.1:8080/v1"
     ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_enabled: bool = False
     models_dir: Path | None = None
+    llama_server_path: Path | None = None
     max_parallel_agents: int = 4
     max_parallel_llm: int = 2
     max_browser_sessions: int = 2

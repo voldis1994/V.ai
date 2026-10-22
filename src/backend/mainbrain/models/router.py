@@ -12,7 +12,11 @@ from mainbrain.core.ids import utc_now
 
 
 class ModelRouter:
-    """Lokālo llama.cpp / Ollama adapteru maršrutētājs."""
+    """Lokālās inference maršrutētājs.
+
+    Primāri: llama.cpp `llama-server` (OpenAI saderīgs localhost).
+    Ollama: tikai ja MAINBRAIN_OLLAMA_ENABLED=true — rezerves adapters.
+    """
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -54,37 +58,45 @@ class ModelRouter:
             return self._health_cache
         results: list[ModelHealth] = []
         llama_ok, llama_detail = await self._probe_openai_compatible(self.settings.llama_base_url)
-        ollama_ok, ollama_detail = await self._probe_ollama(self.settings.ollama_base_url)
+        ollama_ok, ollama_detail = (False, "Ollama rezerve izslēgta (MAINBRAIN_OLLAMA_ENABLED=false)")
+        if self.settings.ollama_enabled:
+            ollama_ok, ollama_detail = await self._probe_ollama(self.settings.ollama_base_url)
         for role in (ModelRole.REASONING, ModelRole.CODING, ModelRole.VISION, ModelRole.EMBEDDING):
             mapped = self._role_models.get(role)
             provider = None
             base = None
             details = "Modelis nav konfigurēts"
             available = False
+            # 1) Primāri vienmēr llama.cpp
             if mapped and llama_ok:
                 provider = "llama.cpp"
                 base = self.settings.llama_base_url
-                # Īsta īsa inference — nedrīkst uzskatīt /models par pietiekamu
                 probe = await self._probe_inference_openai(base)
                 available = probe[0]
                 details = f"GGUF: {mapped['name']}; {llama_detail}; inference={probe[1]}"
-            elif mapped and ollama_ok:
+            elif llama_ok and not mapped and role == ModelRole.REASONING:
+                provider = "llama.cpp"
+                base = self.settings.llama_base_url
+                probe = await self._probe_inference_openai(base)
+                available = probe[0]
+                details = f"llama-server aktīvs; inference={probe[1]}"
+            elif mapped and self.settings.ollama_enabled and ollama_ok:
+                # 2) Tikai skaidri ieslēgta Ollama rezerve
                 provider = "ollama"
                 base = self.settings.ollama_base_url
                 probe = await self._probe_inference_ollama(base, mapped["name"])
                 available = probe[0]
-                details = f"Fails: {mapped['name']}; {ollama_detail}; inference={probe[1]}"
-            elif llama_ok and not mapped and role == ModelRole.REASONING:
-                # serveris darbojas, bet GGUF fails nav lokalizēts — mēģina inferenci bez faila mapes
-                provider = "llama.cpp"
-                base = self.settings.llama_base_url
-                probe = await self._probe_inference_openai(base)
-                available = probe[0]
-                details = f"Serveris bez lokalizēta GGUF mapē; inference={probe[1]}"
+                details = f"REZERVE Ollama: {mapped['name']}; {ollama_detail}; inference={probe[1]}"
             elif not mapped:
-                details = "Nav atrasts GGUF fails šai lomai un nav pierādīta inference"
+                details = (
+                    "Nav GGUF šai lomai. Ievietojiet modeli models mapē un palaidiet llama-server. "
+                    f"({llama_detail})"
+                )
             else:
-                details = f"Modelis atrasts ({mapped['name']}), bet lokālā inference nav pieejama"
+                details = (
+                    f"GGUF atrasts ({mapped['name']}), bet llama-server nav sasniedzams uz "
+                    f"{self.settings.llama_base_url}. {llama_detail}"
+                )
             results.append(
                 ModelHealth(
                     role=role,
@@ -111,9 +123,8 @@ class ModelRouter:
     ) -> dict[str, Any]:
         if role == ModelRole.NONE:
             return {"ok": True, "text": "", "provider": "none"}
-        # Neizmanto mākoņa rezerves; ja lokāli nav — godīga kļūda
-        llama_ok, _ = await self._probe_openai_compatible(self.settings.llama_base_url)
-        ollama_ok, _ = await self._probe_ollama(self.settings.ollama_base_url)
+        # Primāri llama.cpp; Ollama tikai ja ieslēgta; nekad mākonis
+        llama_ok, llama_detail = await self._probe_openai_compatible(self.settings.llama_base_url)
         mapped = self._role_models.get(role)
         messages = []
         if system:
@@ -121,15 +132,21 @@ class ModelRouter:
         messages.append({"role": "user", "content": prompt})
         if llama_ok:
             return await self._chat_openai(self.settings.llama_base_url, messages, temperature, max_tokens)
-        if ollama_ok:
-            model_name = (mapped or {}).get("name") or "local"
-            return await self._chat_ollama(self.settings.ollama_base_url, model_name, messages)
+        if self.settings.ollama_enabled:
+            ollama_ok, _ = await self._probe_ollama(self.settings.ollama_base_url)
+            if ollama_ok:
+                model_name = (mapped or {}).get("name") or "local"
+                result = await self._chat_ollama(self.settings.ollama_base_url, model_name, messages)
+                result["fallback"] = "ollama"
+                return result
         return {
             "ok": False,
             "text": "",
             "error": (
-                "Lokālais modelis nav pieejams. Uzstādiet llama-server vai Ollama un GGUF modeli. "
-                "Mākoņa API netiek izmantots."
+                "llama-server nav pieejams. Primārā inference ir llama.cpp — "
+                "uzstādiet/palaidiet llama-server ar GGUF (scripts/install_llama_server.ps1, "
+                "scripts/start_llama_server.ps1). "
+                f"Detaļas: {llama_detail}. Mākoņa API netiek izmantots."
             ),
             "provider": None,
         }
