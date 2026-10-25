@@ -191,19 +191,24 @@ def speak_text(text: str, *, lang: str = "lv") -> dict[str, Any]:
     # Saīsina ļoti garas atbildes
     if len(t) > 800:
         t = t[:800] + "…"
+    # Viena rinda runāšanai
+    t = " ".join(t.split())
 
     if sys.platform.startswith("win"):
-        # System.Speech caur PowerShell — bez papildu pip
-        safe = t.replace("'", "''")
+        # -EncodedCommand + Base64 teksts — latviešu burti / pēdiņas nesalūzt
+        payload_b64 = base64.b64encode(t.encode("utf-8")).decode("ascii")
         ps = (
             "Add-Type -AssemblyName System.Speech; "
             "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
             "$s.Rate = 0; "
-            f"$s.Speak('{safe}')"
+            f"$bytes = [Convert]::FromBase64String('{payload_b64}'); "
+            "$msg = [System.Text.Encoding]::UTF8.GetString($bytes); "
+            "$s.Speak($msg)"
         )
+        encoded = base64.b64encode(ps.encode("utf-16le")).decode("ascii")
         try:
             completed = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps],
+                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-EncodedCommand", encoded],
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -213,7 +218,7 @@ def speak_text(text: str, *, lang: str = "lv") -> dict[str, Any]:
                 "ok": completed.returncode == 0,
                 "performed": completed.returncode == 0,
                 "engine": "System.Speech",
-                "stderr": completed.stderr[-400:] if completed.stderr else "",
+                "stderr": (completed.stderr or "")[-400:],
             }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc), "engine": "System.Speech"}

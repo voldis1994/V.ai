@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -324,9 +325,8 @@ public partial class MainViewModel : ObservableObject
                 WorkspacePath = string.IsNullOrWhiteSpace(WorkspacePath) ? null : WorkspacePath,
             });
             var reply = result.Reply ?? "";
+            var spoken = HumanizeReply(!string.IsNullOrWhiteSpace(result.SpeakText) ? result.SpeakText! : reply);
             ChatOutput += $"\nMain Brain: {reply}";
-            FormedAnswer = reply;
-            MatrixStatus = preview.ShowPip ? "◈ SKATIES MAZO LODZIŅU (labajā pusē)" : "";
             if (result.Mode is "execute" or "act")
             {
                 TerminalOutput += $"\n[{DateTime.Now:HH:mm:ss}] {result.Mode}: {result.GoalStatus ?? result.UiAction}";
@@ -334,25 +334,44 @@ public partial class MainViewModel : ObservableObject
             }
 
             ApplyUiAction(result, alreadyOpenedUrl: preview.OpenedUrl);
+
+            // Kad uzdevums gatavs: īss brīdis paskatīties → AIZVER mazo lodziņu → atbild saviem vārdiem + VOICE
+            if (preview.ShowPip)
+            {
+                await Task.Delay(1600);
+            }
+
+            ShowImmersiveActivity = false;
+            MatrixStatus = "";
+            FormedAnswer = string.IsNullOrWhiteSpace(spoken) ? reply : spoken;
+            if (!string.IsNullOrWhiteSpace(spoken))
+            {
+                SpeakLocal(spoken);
+            }
+
             OnPropertyChanged(nameof(ApprovalsVisibility));
         }
         catch (TaskCanceledException)
         {
-            var err = "Ilgi nav atbildes — skaties mazo pārlūka lodziņu labajā pusē.";
+            ShowImmersiveActivity = false;
+            var err = "Ilgi nav atbildes — mēģini vēlreiz īsāk.";
             ChatOutput += "\nMain Brain: " + err;
             FormedAnswer = err;
             MatrixStatus = "◈ LĒNI";
+            SpeakLocal(err);
         }
         catch (Exception ex)
         {
+            ShowImmersiveActivity = false;
             var msg = ex.Message ?? "";
             var err = msg.Contains("Timeout", StringComparison.OrdinalIgnoreCase) ||
                       msg.Contains("canceled", StringComparison.OrdinalIgnoreCase)
-                ? "Ilgi nav atbildes — skaties mazo lodziņu labajā pusē."
+                ? "Ilgi nav atbildes — mēģini vēlreiz īsāk."
                 : "Kļūda — " + msg;
             ChatOutput += "\nMain Brain: " + err;
             FormedAnswer = err;
             MatrixStatus = "◈ KĻŪDA";
+            SpeakLocal(err);
         }
         finally
         {
@@ -365,11 +384,16 @@ public partial class MainViewModel : ObservableObject
     private sealed record ActionPreview(bool ShowPip, string? OpenedUrl);
 
     /// <summary>
-    /// Uzreiz: mazais pārlūka lodziņš UZ TĀ PAŠA Matrix ekrāna — redzi, ko AI dara.
+    /// Uzreiz: mazais pārlūka lodziņš LABĀJĀ pusē uz tā paša Matrix ekrāna.
     /// </summary>
     private ActionPreview BeginVisibleAction(string userText)
     {
         var t = userText.Trim();
+        var isCamera = Regex.IsMatch(
+            t,
+            @"(?i)\b(kamer|camera|webcam|seja|face|ko\s+tu\s+redzi|redzi\s+mani|atpazī\w*\s+sej)",
+            RegexOptions.IgnoreCase);
+        var wantsVoice = Regex.IsMatch(t, @"(?i)\b(pasaki|runā|speak|audio|skaļi|izrunā|balsī)\b");
         var search = Regex.IsMatch(
             t,
             @"(?i)\b(sameklē|meklē|atrast|search|google|kas\s+ir|who\s+is|pastāsti\s+par|info\s+par|informācij)",
@@ -381,6 +405,16 @@ public partial class MainViewModel : ObservableObject
         if (personName)
         {
             search = true;
+        }
+
+        // Kamera / «ko tu redzi» — NAV meklēšana; rādam kameras kadru, nevis DuckDuckGo
+        if (isCamera && !build)
+        {
+            MatrixStatus = "◈ SKATOS KAMERĀ …";
+            ActivityTitle = "◈ KO ES DARU · kamera";
+            FormedAnswer = "Skatos kamerā… Pēc brīža pastāstīšu, ko redzu.";
+            ShowImmersiveActivity = false;
+            return new ActionPreview(false, null);
         }
 
         if (build)
@@ -396,8 +430,7 @@ public partial class MainViewModel : ObservableObject
         {
             MatrixStatus = "◈ ATVERU …";
             ActivityTitle = "◈ KO ES DARU · programma";
-            FormedAnswer = "Atveru programmu. Mazajā lodziņā / Windows logā redzēsi darbību.";
-            // Programmas (notepad) — īss yield, lai Windows logs būtu priekšā
+            FormedAnswer = "Atveru programmu. Windows logā redzēsi darbību.";
             YieldForExternalAction?.Invoke("open");
             return new ActionPreview(false, null);
         }
@@ -407,10 +440,11 @@ public partial class MainViewModel : ObservableObject
             var q = ExtractSearchQuery(t);
             var url = "https://duckduckgo.com/?q=" + Uri.EscapeDataString(q);
             MatrixStatus = "◈ MEKLĒJU …";
-            ActivityTitle = "◈ KO ES DARU · meklēšana";
+            ActivityTitle = "◈ KO ES DARU · meklēšana (labajā)";
             FormedAnswer =
-                $"Meklēju «{q}».\n\nSkaties MAZO LODZIŅU labajā pusē — tur es ieeju internetā.";
-            // PiP uz tā paša ekrāna — NEminimizējam Matrix
+                wantsVoice
+                    ? $"Meklēju «{q}». Pēc tam pateikšu balsī, ko atrada."
+                    : $"Meklēju «{q}».\n\nLabajā pusē — mazais logs (ko es daru). Pēc tam to aizvēršu un pastāstīšu, ko atrada.";
             ShowImmersiveActivity = true;
             BrowserUrl = url;
             return new ActionPreview(true, url);
@@ -451,10 +485,16 @@ public partial class MainViewModel : ObservableObject
 
             if (!string.IsNullOrWhiteSpace(result.OpenUrl))
             {
-                // Rādam tajā pašā Matrix ekrānā mazajā WebView lodziņā
-                ShowImmersiveActivity = true;
-                ActivityTitle = "◈ KO ES DARU · meklēšana";
-                BrowserUrl = result.OpenUrl;
+                // PiP jau rādīts BeginVisibleAction laikā — tikai atjauninam URL, NEATVERAM no jauna pēc atbildes
+                if (ShowImmersiveActivity || !stayOnMatrix)
+                {
+                    BrowserUrl = result.OpenUrl;
+                }
+
+                if (!stayOnMatrix)
+                {
+                    FocusSource = "browser";
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(result.ImagePath) && System.IO.File.Exists(result.ImagePath))
@@ -501,10 +541,7 @@ public partial class MainViewModel : ObservableObject
                 }
             }
 
-            if (!string.IsNullOrWhiteSpace(result.SpeakText))
-            {
-                SpeakLocal(result.SpeakText);
-            }
+            // SpeakLocal — tikai no SendGoalAsync (pēc PiP aizvēršanas), lai nebūtu dubultā
 
             if (stayOnMatrix)
             {
@@ -520,24 +557,54 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>Noņem tehniskās piezīmes — atstāj to, ko AI «atrada» saviem vārdiem.</summary>
+    private static string HumanizeReply(string reply)
+    {
+        if (string.IsNullOrWhiteSpace(reply))
+        {
+            return "";
+        }
+
+        var t = reply.Trim();
+        t = Regex.Replace(t, @"\n*\[Darbība\][^\n]*", "", RegexOptions.IgnoreCase);
+        t = Regex.Replace(t, @"\n*\[Iemācīts\][^\n]*", "", RegexOptions.IgnoreCase);
+        t = Regex.Replace(t, @"\(Lokālais modelis[^\)]*\)", "", RegexOptions.IgnoreCase);
+        t = Regex.Replace(t, @"Ollama netiek izmantota\.", "", RegexOptions.IgnoreCase);
+        t = Regex.Replace(t, @"\n{3,}", "\n\n").Trim();
+        return t;
+    }
+
+    /// <summary>Windows SAPI caur -EncodedCommand — latviešu burti / pēdiņas nesalūzt.</summary>
     private static void SpeakLocal(string text)
     {
         try
         {
-            var safe = text.Replace("'", "''");
-            if (safe.Length > 600)
+            var t = HumanizeReply(text);
+            t = Regex.Replace(t, @"\s+", " ").Trim();
+            if (string.IsNullOrWhiteSpace(t))
             {
-                safe = safe[..600];
+                return;
             }
 
-            var ps =
+            if (t.Length > 500)
+            {
+                t = t[..500] + "…";
+            }
+
+            // Tekstu iebāžam Base64 — nekādu quoting problēmu ar ā/č/«»
+            var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(t));
+            var script =
                 "Add-Type -AssemblyName System.Speech; " +
                 "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; " +
-                $"$s.Speak('{safe}')";
+                "$s.Rate = 0; " +
+                "$bytes = [Convert]::FromBase64String('" + b64 + "'); " +
+                "$t = [System.Text.Encoding]::UTF8.GetString($bytes); " +
+                "$s.Speak($t)";
+            var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
             Process.Start(new ProcessStartInfo
             {
                 FileName = "powershell",
-                Arguments = "-NoProfile -WindowStyle Hidden -Command \"" + ps.Replace("\"", "\\\"") + "\"",
+                Arguments = "-NoProfile -WindowStyle Hidden -EncodedCommand " + encoded,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             });

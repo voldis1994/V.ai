@@ -258,26 +258,14 @@ class ChatService:
         history[:] = cleaned[-10:]
         history.append({"role": "assistant", "content": reply})
 
-        # Audio: ja lietotājs lūdz runāt / pasaki
+        # Voice: NEbloķējam /chat ar SAPI. Desktop SpeakLocal(speak_text) pēc PiP aizvēršanas.
         speak = speak_text
         probe = (user_msg or "").lower()
-        if speak is None and re.search(r"(?i)\b(pasaki|runā|speak|audio|skaļi|izrunā)\b", probe):
+        if speak is None and re.search(r"(?i)\b(pasaki|runā|speak|audio|skaļi|izrunā|balsī)\b", probe):
             speak = reply
-        if speak:
-            actor_tools = getattr(getattr(self.brain, "runtime", None), "tools", None)
-            if actor_tools is not None:
-                try:
-                    from mainbrain.contracts.schemas import ToolRequest
-
-                    actor_tools.execute(
-                        ToolRequest(
-                            tool="audio.speak",
-                            arguments={"text": speak[:800], "lang": "lv"},
-                            agent_id="ChatService",
-                        )
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
+        # Meklēšana / kamera / act — vienmēr atdodam runājamo tekstu (Desktop balsīs)
+        if speak is None and mode in {"act", "execute"} and reply:
+            speak = reply.split("\n\n[Darbība]")[0].split("\n\n[Iemācīts]")[0].strip()
 
         return ChatResponse(
             reply=reply,
@@ -306,36 +294,65 @@ class ChatService:
                 session,
                 history,
                 "Kameras rīki nav pieejami. Instalē OpenCV: scripts\\install_sense.ps1",
+                speak_text="Kameras rīki nav pieejami. Palaid install sense skriptu.",
                 user_msg=user_msg,
             )
         from mainbrain.contracts.schemas import ToolRequest
 
-        vision = tools.execute(
-            ToolRequest(tool="vision.analyze", arguments={"camera_index": 0}, agent_id="ChatService")
-        )
-        faces = tools.execute(
-            ToolRequest(tool="face.detect", arguments={"camera_index": 0}, agent_id="ChatService")
-        )
-        vout = vision.output if isinstance(vision.output, dict) else {}
-        fout = faces.output if isinstance(faces.output, dict) else {}
-        if not vision.ok and not faces.ok:
-            err = vout.get("error") or fout.get("error") or vision.error or faces.error
+        vision = None
+        faces = None
+        vout: dict[str, Any] = {}
+        fout: dict[str, Any] = {}
+        # Mēģina 0. un 1. kameru (USB / iebūvēta)
+        for idx in (0, 1):
+            vision = tools.execute(
+                ToolRequest(
+                    tool="vision.analyze",
+                    arguments={"camera_index": idx},
+                    agent_id="ChatService",
+                )
+            )
+            vout = vision.output if isinstance(vision.output, dict) else {}
+            if vision.ok:
+                faces = tools.execute(
+                    ToolRequest(
+                        tool="face.detect",
+                        arguments={
+                            "camera_index": idx,
+                            "path": vout.get("path"),
+                        },
+                        agent_id="ChatService",
+                    )
+                )
+                fout = faces.output if isinstance(faces.output, dict) else {}
+                break
+
+        if vision is None or (not vision.ok and (faces is None or not faces.ok)):
+            err = vout.get("error") or fout.get("error") or (vision.error if vision else None)
+            msg = (
+                f"Kamera/analīze neizdevās: {err}. "
+                "Pārbaudi, vai kamera nav aizņemta citā programmā, "
+                "un palaid scripts\\install_sense.ps1"
+            )
             return self._finish(
                 session,
                 history,
-                f"Kamera/analīze neizdevās: {err}. "
-                "Pārbaudi kameras atļaujas un palaid scripts\\install_sense.ps1",
+                msg,
+                speak_text="Kamera nestrādā. Pārbaudi atļaujas un OpenCV instalāciju.",
                 user_msg=user_msg,
             )
-        desc = vout.get("description") or fout.get("summary") or "Kadrs saglabāts."
+        face_n = int(fout.get("face_count") or 0)
+        notes = str(vout.get("notes") or "").strip()
         path = fout.get("annotated_path") or vout.get("path") or fout.get("path")
+        if face_n > 0:
+            spoken = f"Es redzu {face_n} sejas. {notes}".strip()
+        else:
+            spoken = f"Kamerā sejas neredzu. {notes or 'Kadrs saglabāts.'}".strip()
         reply = (
-            f"{desc}\n"
-            f"Sejas: {fout.get('face_count', 0)}. "
+            f"{spoken}\n"
             f"Kadrs: {path or '—'}.\n"
             "Ja gribi programmu: «izveido sejas atpazīšanas programmu»."
         )
-        # Runā rezultātu skaļi
         return self._finish(
             session,
             history,
@@ -344,7 +361,7 @@ class ChatService:
             ui_action="open_path",
             open_path=path,
             focus="live",
-            speak_text=desc,
+            speak_text=spoken,
             image_path=path,
             user_msg=user_msg,
         )
@@ -393,45 +410,56 @@ class ChatService:
                 web_hits, wiki_bits = [], []
 
         facts = [h for h in (wiki_bits + web_hits + local_hits) if h and not str(h).startswith("(")]
-        reply = self._facts_to_reply(q, facts)
-        if not reply:
-            reply = (
-                f"Atvēru pārlūkā meklēšanu par «{q}».\n"
-                "Skaties pārlūka logu — tur ir rezultāti. "
-                "(Lokālais modelis netiek gaidīts; Ollama netiek izmantota.)"
+        spoken = self._facts_to_reply(q, facts)
+        if not spoken:
+            spoken = (
+                f"Par «{q}» īsu kopsavilkumu no interneta neizdevās salikt, "
+                "bet meklēšanu atvēru — rezultāti bija redzami mazajā lodziņā."
             )
 
         act_note = f"\n\n[Darbība] Atvēru pārlūku → {url}"
         if isinstance(opened, dict) and opened.get("error"):
             act_note += f" ({opened.get('error')})"
         if learn:
-            self._remember(q, reply, kind="learn")
+            self._remember(q, spoken, kind="learn")
             act_note += "\n[Iemācīts] Saglabāju atmiņā."
         else:
-            self._remember(q, reply, kind="search")
+            self._remember(q, spoken, kind="search")
 
+        # runā KO ATRADA — Desktop aizver PiP un SpeakLocal(speak_text)
         return self._finish(
             session,
             history,
-            reply + act_note,
+            spoken + act_note,
             mode="act",
             ui_action="open_browser",
             open_url=url,
             focus="browser",
+            speak_text=spoken,
+            user_msg=user_msg,
         )
 
     @staticmethod
     def _facts_to_reply(topic: str, facts: list[str]) -> str:
+        """Saviem vārdiem — ko atrada, nevis sausi linki."""
         if not facts:
             return ""
-        lines = [f"Par «{topic}» no interneta:"]
-        for i, f in enumerate(facts[:4], 1):
-            chunk = f.strip()
-            if len(chunk) > 450:
-                chunk = chunk[:450] + "…"
-            lines.append(f"{i}) {chunk}")
-        lines.append("Pārlūkā atvēru pilno meklēšanu — tur vari lasīt avotus.")
-        return "\n".join(lines)
+        cleaned: list[str] = []
+        for f in facts[:4]:
+            chunk = str(f).strip()
+            # Noņem «Avots:» rindas no runājamā teksta (URL paliek žurnālā)
+            chunk = re.sub(r"(?im)^\s*Avots:\s*\S+\s*$", "", chunk).strip()
+            chunk = re.sub(r"\s+", " ", chunk)
+            if len(chunk) > 380:
+                chunk = chunk[:380].rsplit(" ", 1)[0] + "…"
+            if chunk and chunk not in cleaned:
+                cleaned.append(chunk)
+        if not cleaned:
+            return ""
+        if len(cleaned) == 1:
+            return f"Par «{topic}» atrada: {cleaned[0]}"
+        body = " ".join(f"{i}) {c}" for i, c in enumerate(cleaned, 1))
+        return f"Par «{topic}» atrada šādi. {body}"
 
     async def _search_wikipedia(self, query: str) -> list[str]:
         """Ātri fakti par cilvēkiem/tēmām — bez LLM bloķēšanas."""

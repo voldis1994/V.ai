@@ -13,16 +13,56 @@
         Foreground="{StaticResource TextBrush}"
         KeyDown="Window_OnKeyDown">
   <Grid>
-    <!-- Dzīvā Matrix sistēma — hieroglifi salido atbildē -->
+    <!-- Matrix fons + atbilde centrā -->
     <ctrl:MatrixMindCanvas x:Name="Mind"
                            Panel.ZIndex="0"
                            AnswerText="{Binding FormedAnswer}"
                            IsThinking="{Binding IsThinking}"
                            StatusLine="{Binding MatrixStatus}"/>
 
-    <!-- Immersīvais režīms: VIENS ekrāns — Matrix + jautājums (bez paneļu pārslēgšanas) -->
-    <DockPanel Panel.ZIndex="2" Visibility="{Binding ImmersiveVisibility}">
-      <Border DockPanel.Dock="Bottom" Background="#AA08020A" Padding="24,10,24,18">
+    <!-- Immersīvais overlay: Grid — skaidrs izkārtojums -->
+    <Grid Panel.ZIndex="2" Visibility="{Binding ImmersiveVisibility}">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+
+      <!-- Labā puse: mazais «ko es daru» logs (augšā) + kamera (apakšā) -->
+      <StackPanel Grid.Row="0" Grid.Column="1" VerticalAlignment="Top" Margin="0,56,20,0">
+        <Border Width="440" Height="300" CornerRadius="8"
+                BorderBrush="#AAFF2ECB" BorderThickness="2" Background="#F208020A"
+                Visibility="{Binding ImmersiveActivityVisibility}" Margin="0,0,0,12">
+          <Border.Effect>
+            <DropShadowEffect Color="#FF2ECB" BlurRadius="20" ShadowDepth="0" Opacity="0.5"/>
+          </Border.Effect>
+          <DockPanel>
+            <Border DockPanel.Dock="Top" Background="#4408020A" Padding="10,7"
+                    BorderBrush="#44FF2ECB" BorderThickness="0,0,0,1">
+              <TextBlock Text="{Binding ActivityTitle}" FontFamily="Consolas" FontSize="12"
+                         FontWeight="Bold" Foreground="#FFFF2ECB"/>
+            </Border>
+            <wv2:WebView2 x:Name="ImmersiveBrowser" Source="about:blank"/>
+          </DockPanel>
+        </Border>
+
+        <Border Width="440" MaxHeight="180" CornerRadius="6"
+                BorderBrush="#66FF2ECB" BorderThickness="1" Background="#CC08020A"
+                Visibility="{Binding ImmersiveLiveVisibility}">
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Top" Text="◈ KAMERA" FontFamily="Consolas" FontSize="11"
+                       Foreground="#FFFF2ECB" Margin="8,6,8,4"/>
+            <Image x:Name="ImmersiveLiveImage" Stretch="Uniform" Margin="4"/>
+          </DockPanel>
+        </Border>
+      </StackPanel>
+
+      <!-- Apakša: jautājuma rinda -->
+      <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+              Background="#AA08020A" Padding="24,10,24,18">
         <StackPanel MaxWidth="920" HorizontalAlignment="Center">
           <DockPanel>
             <TextBlock DockPanel.Dock="Left" Text="▌" FontFamily="Consolas" FontSize="20"
@@ -37,43 +77,14 @@
                      CaretBrush="#FFFF2ECB" Padding="0,8"
                      KeyDown="ChatBox_OnKeyDown"/>
           </DockPanel>
-          <TextBlock Text="Enter · jautā   ·   labajā: mazais logs ko AI dara   ·   Ctrl+Shift+D · sistēma   ·   F11"
+          <TextBlock Text="Enter · jautā   ·   labajā: mazais logs (aizveras pats)   ·   kamera / voice   ·   Ctrl+Shift+D · sistēma"
                      FontFamily="Consolas" FontSize="11" Foreground="#44FF2ECB"
                      HorizontalAlignment="Center" Margin="0,6,0,0"/>
         </StackPanel>
       </Border>
-      <!-- Dzīvais lodziņš: ko AI DARA (pārlūks) — uz TĀ PAŠA Matrix ekrāna -->
-      <Border HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,24,80"
-              Width="520" Height="360" CornerRadius="8"
-              BorderBrush="#AAFF2ECB" BorderThickness="2" Background="#EE08020A"
-              Visibility="{Binding ImmersiveActivityVisibility}">
-        <Border.Effect>
-          <DropShadowEffect Color="#FF2ECB" BlurRadius="24" ShadowDepth="0" Opacity="0.55"/>
-        </Border.Effect>
-        <DockPanel>
-          <Border DockPanel.Dock="Top" Background="#3308020A" Padding="12,8" BorderBrush="#44FF2ECB" BorderThickness="0,0,0,1">
-            <DockPanel>
-              <TextBlock DockPanel.Dock="Left" Text="{Binding ActivityTitle}"
-                         FontFamily="Consolas" FontSize="13" FontWeight="Bold"
-                         Foreground="#FFFF2ECB" VerticalAlignment="Center"/>
-              <TextBlock DockPanel.Dock="Right" Text="mazais logs · tas pats ekrāns"
-                         FontFamily="Consolas" FontSize="10" Foreground="#66FFB7EC"
-                         VerticalAlignment="Center" HorizontalAlignment="Right"/>
-            </DockPanel>
-          </Border>
-          <wv2:WebView2 x:Name="ImmersiveBrowser" Source="about:blank"/>
-        </DockPanel>
-      </Border>
-      <!-- Kamera/attēls — mazāks, zem activity lodziņa -->
-      <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,28,12"
-              Width="280" MaxHeight="160" CornerRadius="4"
-              BorderBrush="#66FF2ECB" BorderThickness="1" Background="#8808020A"
-              Visibility="{Binding ImmersiveLiveVisibility}">
-        <Image x:Name="ImmersiveLiveImage" Stretch="Uniform" Opacity="0.92"/>
-      </Border>
-    </DockPanel>
+    </Grid>
 
-    <!-- Dev chrome: tikai Ctrl+Shift+D (nav redzams parasti) -->
+    <!-- Dev chrome: tikai Ctrl+Shift+D -->
     <Grid Panel.ZIndex="3" Visibility="{Binding ChromeVisibility}">
       <Grid.RowDefinitions>
         <RowDefinition Height="44"/>
@@ -112,8 +123,7 @@
                 <DataTemplate>
                   <StackPanel Margin="0,3">
                     <TextBlock Foreground="#FFFFB7EC">
-                      <Run Text="{Binding Number, StringFormat={}{0:00}.}" FontWeight="Bold"/>
-                      <Run Text="{Binding Name}"/>
+                      <Run Text="{Binding Number, StringFormat={}{0}.}"/> <Run Text="{Binding Name}"/>
                     </TextBlock>
                     <TextBlock Text="{Binding Section}" Foreground="#88FF2ECB" FontSize="11"/>
                   </StackPanel>
@@ -129,21 +139,22 @@
           <DockPanel>
             <TextBlock DockPanel.Dock="Top" Text="INSPECT" FontWeight="Bold" Foreground="#FFFF2ECB" Margin="0,0,0,8"/>
             <Button DockPanel.Dock="Top" Content="Izsaukt aģentu" Style="{StaticResource AccentBtn}" Command="{Binding InvokeSelectedAgentCommand}" Margin="0,0,0,8"/>
-            <TextBox Text="{Binding InspectorText}" AcceptsReturn="True" TextWrapping="Wrap" IsReadOnly="True"
+            <TextBox Text="{Binding InspectorText}" AcceptsReturn="True" TextWrapping="Wrap"
                      VerticalScrollBarVisibility="Auto" Background="Transparent" Foreground="#FFFFB7EC" BorderThickness="0"/>
           </DockPanel>
         </Border>
 
-        <Grid Visibility="{Binding FocusVisibility}" Margin="0,0,0,0">
+        <Grid Margin="8" Visibility="{Binding FocusVisibility}">
+          <Border Visibility="{Binding HomeVisibility}" Background="Transparent"/>
           <Border Visibility="{Binding BrowserVisibility}" Background="#EE0A0210">
             <wv2:WebView2 x:Name="Browser" Source="about:blank"/>
           </Border>
           <Border Visibility="{Binding EditorVisibility}" Background="#CC0A0210" Padding="12">
-            <TextBox Text="{Binding EditorText}" AcceptsReturn="True" FontFamily="Consolas" FontSize="14"
+            <TextBox Text="{Binding EditorText}" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas"
                      Background="Transparent" Foreground="#FFFFB7EC" BorderThickness="0" VerticalScrollBarVisibility="Auto"/>
           </Border>
           <Border Visibility="{Binding TerminalVisibility}" Background="#CC0A0210" Padding="12">
-            <TextBox Text="{Binding TerminalOutput}" IsReadOnly="True" FontFamily="Consolas" FontSize="13"
+            <TextBox Text="{Binding TerminalOutput}" AcceptsReturn="True" IsReadOnly="True" FontFamily="Consolas"
                      Background="Transparent" Foreground="#FFFF2ECB" BorderThickness="0"/>
           </Border>
           <Border Visibility="{Binding LiveVisibility}" Background="#CC0A0210" Padding="8">
@@ -154,9 +165,9 @@
           </Border>
         </Grid>
 
-        <Grid Visibility="{Binding MultiVisibility}" Margin="8">
+        <Grid Margin="8" Visibility="{Binding MultiVisibility}">
           <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="2*"/>
             <ColumnDefinition Width="*"/>
           </Grid.ColumnDefinitions>
           <Grid.RowDefinitions>
@@ -167,11 +178,11 @@
             <wv2:WebView2 x:Name="BrowserMulti" Source="about:blank"/>
           </Border>
           <Border Grid.Column="1" Grid.Row="0" Margin="4,0,0,4" Background="#CC0A0210" BorderBrush="#33FF2ECB" BorderThickness="1" Padding="8">
-            <TextBox Text="{Binding EditorText}" AcceptsReturn="True" FontFamily="Consolas"
+            <TextBox Text="{Binding EditorText}" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas"
                      Background="Transparent" Foreground="#FFFFB7EC" BorderThickness="0"/>
           </Border>
           <Border Grid.Column="0" Grid.Row="1" Margin="0,4,4,0" Background="#CC0A0210" BorderBrush="#33FF2ECB" BorderThickness="1" Padding="8">
-            <TextBox Text="{Binding TerminalOutput}" IsReadOnly="True" FontFamily="Consolas"
+            <TextBox Text="{Binding TerminalOutput}" AcceptsReturn="True" IsReadOnly="True" FontFamily="Consolas"
                      Background="Transparent" Foreground="#FFFF2ECB" BorderThickness="0"/>
           </Border>
           <Border Grid.Column="1" Grid.Row="1" Margin="4,4,0,0" Background="#CC0A0210" BorderBrush="#33FF2ECB" BorderThickness="1" Padding="8">
@@ -198,7 +209,7 @@
             <DockPanel>
               <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                 <Button Content="Atļaut" Style="{StaticResource AccentBtn}" Command="{Binding DecideApprovalCommand}" CommandParameter="allowed_once"/>
-                <Button Content="Noraidīt" Style="{StaticResource DangerBtn}" Command="{Binding DecideApprovalCommand}" CommandParameter="rejected"/>
+                <Button Content="Noraidīt" Style="{StaticResource DangerBtn}" Command="{Binding DecideApprovalCommand}" CommandParameter="denied"/>
               </StackPanel>
               <ItemsControl ItemsSource="{Binding Approvals}">
                 <ItemsControl.ItemTemplate>
@@ -221,10 +232,9 @@
             <DockPanel>
               <Button DockPanel.Dock="Right" Content="▶ SŪTĪT" Style="{StaticResource AccentBtn}"
                       Command="{Binding SendGoalCommand}" MinWidth="100"/>
-              <TextBox Text="{Binding ChatInput, UpdateSourceTrigger=PropertyChanged}"
-                       MinHeight="40" VerticalContentAlignment="Center" FontSize="14" FontFamily="Consolas"
+              <TextBox Text="{Binding ChatInput, UpdateSourceTrigger=PropertyChanged}" MinHeight="36"
                        Background="#AA0A0210" Foreground="#FFFFB7EC" BorderBrush="#66FF2ECB" BorderThickness="1"
-                       Padding="12,8" KeyDown="ChatBox_OnKeyDown"/>
+                       VerticalContentAlignment="Center" Padding="8,4"/>
             </DockPanel>
           </StackPanel>
         </DockPanel>
