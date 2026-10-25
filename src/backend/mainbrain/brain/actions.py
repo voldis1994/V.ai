@@ -97,21 +97,21 @@ class PhysicalActor:
     def _exec(self, tool: str, arguments: dict[str, Any]) -> Any:
         return self.tools.execute(ToolRequest(tool=tool, arguments=arguments, agent_id="PhysicalActor"))
 
-    def open_url(self, url: str) -> dict[str, Any]:
-        """Atver URL iegultajā WebView2 UN sistēmas pārlūkā (Chrome/Edge/start)."""
+    def open_url(self, url: str, *, via_bridge: bool = False) -> dict[str, Any]:
+        """Atver URL. Noklusējumā BEZ bridge (izvairās no deadlock ar Desktop /chat)."""
         results: dict[str, Any] = {"url": url, "webview": None, "system_browser": None}
-        # 1) Iegultais pārlūks (ja Desktop tilts dzīvs)
-        try:
-            nav = self._exec("browser.navigate", {"url": url})
-            results["webview"] = {
-                "ok": nav.ok,
-                "output": nav.output,
-                "error": nav.error,
-            }
-        except Exception as exc:  # noqa: BLE001
-            results["webview"] = {"ok": False, "error": str(exc)}
+        # Bridge browser.navigate — TIKAI ja īpaši lūgts (var bloķēt pipe līdz 30s+)
+        if via_bridge:
+            try:
+                nav = self._exec("browser.navigate", {"url": url})
+                results["webview"] = {
+                    "ok": nav.ok,
+                    "output": nav.output,
+                    "error": nav.error,
+                }
+            except Exception as exc:  # noqa: BLE001
+                results["webview"] = {"ok": False, "error": str(exc)}
 
-        # 2) Sistēmas pārlūks — vairāki mēģinājumi, lai lietotājs NOTEIKTI REDZ logu
         launched = False
         last_err = ""
         if sys.platform.startswith("win"):
@@ -144,18 +144,7 @@ class PhysicalActor:
                 last_err = str(exc)
 
         if not launched:
-            shell = self._exec(
-                "shell.run",
-                {
-                    "command": f'start "" "{url}"' if sys.platform.startswith("win") else f'xdg-open "{url}"',
-                    "auto_safe": True,
-                },
-            )
-            results["system_browser"] = {
-                "ok": shell.ok,
-                "output": shell.output,
-                "error": last_err or shell.error,
-            }
+            results["system_browser"] = {"ok": False, "error": last_err or "neizdevās atvērt"}
         return results
 
     def open_path(self, path: str) -> dict[str, Any]:
@@ -214,32 +203,40 @@ class PhysicalActor:
             "performed": started.ok,
         }
 
-    def search_and_open(self, query: str) -> dict[str, Any]:
+    def search_and_open(self, query: str, *, via_bridge: bool = False) -> dict[str, Any]:
         url = duckduckgo_url(query)
-        opened = self.open_url(url)
+        # via_bridge=False: Desktop PiP jau rāda URL; netraucējam ar pipe
+        opened = self.open_url(url, via_bridge=via_bridge)
         return {"query": query, "url": url, **opened}
+
+    def write_text_file(self, path: Path, content: str) -> dict[str, Any]:
+        """Tikai ieraksta failu — bez Notepad/bridge (ātri, bez deadlock)."""
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+            return {"write_ok": True, "path": str(path), "opened": None}
+        except OSError as exc:
+            return {"write_ok": False, "path": str(path), "error": str(exc)}
 
     def create_and_open_text(self, path: Path, content: str, *, open_with: str | None = "notepad") -> dict[str, Any]:
         path.parent.mkdir(parents=True, exist_ok=True)
-        write = self._exec("files.write", {"path": str(path), "content": content})
-        # Fallback: tieša rakstīšana, ja tools.files.write nav
-        if not write.ok:
-            try:
-                path.write_text(content, encoding="utf-8")
-                write_ok = True
-            except OSError as exc:
-                return {"write_ok": False, "path": str(path), "error": str(exc)}
-        else:
+        # Vispirms tieša rakstīšana — ātri un droši
+        try:
+            path.write_text(content, encoding="utf-8")
             write_ok = True
-            try:
-                if not path.is_file():
-                    path.write_text(content, encoding="utf-8")
-            except OSError:
-                pass
+            write_out: Any = {"path": str(path), "bytes": len(content.encode("utf-8"))}
+            write_err = None
+        except OSError as exc:
+            write = self._exec("files.write", {"path": str(path), "content": content})
+            write_ok = bool(write.ok)
+            write_out = write.output
+            write_err = write.error or str(exc)
+            if not write_ok:
+                return {"write_ok": False, "path": str(path), "error": write_err}
 
         opened = None
         used = open_with
-        if open_with:
+        if open_with and open_with.lower() not in {"none", "no", "false"}:
             if open_with.lower() in {"auto", "best", "editor"}:
                 used = self.open_in_best_editor(str(path))
                 opened = {"ok": True, "via": used}
@@ -254,8 +251,8 @@ class PhysicalActor:
             "path": str(path),
             "opened": opened,
             "open_with": used,
-            "write": getattr(write, "output", None),
-            "error": getattr(write, "error", None),
+            "write": write_out,
+            "error": write_err,
         }
 
     def open_in_best_editor(self, path: str) -> str:

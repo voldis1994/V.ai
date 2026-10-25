@@ -393,49 +393,57 @@ class ChatService:
         *,
         learn: bool = False,
     ) -> ChatResponse:
-        """UZREIZ: atver pārlūku + fakti. Bez Ollama, bez LLM gaidīšanas."""
+        """UZREIZ: fakti + saglabā. Desktop PiP jau rāda DDG — NEBLOĶĒJAM ar bridge."""
         q = (topic if topic else user_msg).strip() or user_msg
-        search_q = user_msg if intent == Intent.PERSON else q
+        # PERSON: meklē pēc vārda, nevis visas frāzes ar «sameklē»
+        search_q = q if intent == Intent.PERSON else (topic or user_msg).strip() or user_msg
+        if intent == Intent.PERSON and not q:
+            search_q = user_msg
 
-        # 1) FIZISKI atver pārlūku — lietotājs REDZ darbību uzreiz
         url = duckduckgo_url(search_q)
         actor = self._actor()
-        opened: dict[str, Any] | None = None
+        # NEIZSAUCAM browser.navigate caur pipe — tas deadlock'oja Desktop (gaida /chat).
+        # PiP jau iestatīts no BeginVisibleAction. Sistēmas pārlūku var palaist fona pavedienā.
+        opened: dict[str, Any] = {"url": url, "pip": "desktop"}
         if actor is not None:
             try:
-                opened = actor.search_and_open(search_q)
-                url = str(opened.get("url") or url)
+                # Tikāi start "" url — bez bridge, bez gaidīšanas
+                opened = actor.open_url(url, via_bridge=False)
+                opened["url"] = url
             except Exception as exc:  # noqa: BLE001
-                opened = {"error": str(exc)}
+                opened = {"url": url, "error": str(exc)}
 
-        # 2) Fakti no Wikipedia + DDG — paralēli, ātri (bez LLM / bez Ollama)
-        local_hits = self._search_local_knowledge(q)
+        local_hits = self._search_local_knowledge(q) or self._search_local_knowledge(search_q)
         web_hits: list[str] = []
         wiki_bits: list[str] = []
         if self._internet_enabled():
             try:
-                web_hits, wiki_bits = await asyncio.wait_for(
+                gathered = await asyncio.wait_for(
                     asyncio.gather(
                         self._search_web(search_q),
                         self._search_wikipedia(search_q),
-                        return_exceptions=False,
+                        return_exceptions=True,
                     ),
-                    timeout=12.0,
+                    timeout=8.0,
                 )
+                wh, wi = gathered
+                web_hits = wh if isinstance(wh, list) else []
+                wiki_bits = wi if isinstance(wi, list) else []
             except Exception:  # noqa: BLE001
                 web_hits, wiki_bits = [], []
 
         facts = [h for h in (wiki_bits + web_hits + local_hits) if h and not str(h).startswith("(")]
-        spoken = self._facts_to_reply(q, facts)
+        spoken = self._facts_to_reply(q or search_q, facts)
         if not spoken:
             spoken = (
-                f"Par «{q}» īsu kopsavilkumu no interneta neizdevās salikt, "
-                "bet meklēšanu atvēru — rezultāti bija redzami mazajā lodziņā."
+                f"Par «{q or search_q}» sameklēju internetā. "
+                "Mazajā lodziņā bija DuckDuckGo rezultāti (piem. LinkedIn u.c.). "
+                "Pilnu kopsavilkumu no avotiem šoreiz neizdevās salikt — bet meklēšana notika."
             )
 
-        # FIZISKI saglabā atrastos faktus failā + atver Notepad/editor — nevis «tikai atvēru»
+        # Saglabā .md BEZ Notepad gaidīšanas (Desktop var atvērt pēc atbildes)
         saved_path = self._persist_findings(
-            topic=q,
+            topic=q or search_q,
             spoken=spoken,
             facts=facts,
             url=url,
@@ -443,16 +451,16 @@ class ChatService:
             actor=actor,
         )
 
-        act_parts = [f"[Darbība] Atvēru pārlūku → {url}"]
+        act_parts = [f"[Darbība] Meklēšana → {url}"]
         if isinstance(opened, dict) and opened.get("error"):
             act_parts.append(f"({opened.get('error')})")
         if saved_path:
             act_parts.append(f"Saglabāju failā: {saved_path}")
         if learn:
-            self._remember(q, spoken, kind="learn")
+            self._remember(q or search_q, spoken, kind="learn")
             act_parts.append("[Iemācīts] Saglabāju arī atmiņā.")
         else:
-            self._remember(q, spoken, kind="search")
+            self._remember(q or search_q, spoken, kind="search")
 
         reply = spoken + "\n\n" + "\n".join(act_parts)
         return self._finish(
@@ -478,7 +486,7 @@ class ChatService:
         learn: bool,
         actor: PhysicalActor | None,
     ) -> str | None:
-        """Raksta atrastos faktus Documents/MainBrainOS/knowledge/*.md un atver failu."""
+        """Raksta atrastos faktus Documents/MainBrainOS/knowledge/*.md — bez Notepad bloķēšanas."""
         try:
             docs = Path.home() / "Documents" / "MainBrainOS" / "knowledge"
             docs.mkdir(parents=True, exist_ok=True)
@@ -498,11 +506,11 @@ class ChatService:
             ]
             for i, f in enumerate(facts[:8], 1):
                 body_lines.append(f"{i}. {str(f).strip()[:800]}")
-            body_lines.extend(["", f"## Meklēšana", url, ""])
+            body_lines.extend(["", "## Meklēšana", url, ""])
             content = "\n".join(body_lines)
             if actor is not None:
-                result = actor.create_and_open_text(path, content, open_with="notepad")
-                if result.get("write_ok") or path.is_file():
+                result = actor.write_text_file(path, content)
+                if result.get("write_ok"):
                     return str(path)
             path.write_text(content, encoding="utf-8")
             return str(path)

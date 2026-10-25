@@ -49,11 +49,23 @@ public sealed class ApiClient
         return await JsonSerializer.DeserializeAsync<JsonElement>(stream, JsonOptions);
     }
 
-    public async Task<ChatResponseDto> ChatAsync(ChatRequestDto request)
+    public async Task<ChatResponseDto> ChatAsync(
+        ChatRequestDto request,
+        CancellationToken cancellationToken = default,
+        TimeSpan? timeout = null)
     {
         try
         {
-            var resp = await _http.PostAsJsonAsync("/chat", request, JsonOptions);
+            using var timeoutCts = timeout is { } t
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : null;
+            if (timeoutCts is not null && timeout is { } ts)
+            {
+                timeoutCts.CancelAfter(ts);
+            }
+
+            var ct = timeoutCts?.Token ?? cancellationToken;
+            var resp = await _http.PostAsJsonAsync("/chat", request, JsonOptions, ct);
             if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 return new ChatResponseDto
@@ -67,7 +79,7 @@ public sealed class ApiClient
 
             if (!resp.IsSuccessStatusCode)
             {
-                var body = await resp.Content.ReadAsStringAsync();
+                var body = await resp.Content.ReadAsStringAsync(ct);
                 return new ChatResponseDto
                 {
                     Reply = $"API kļūda {(int)resp.StatusCode}: {body}",
@@ -75,16 +87,16 @@ public sealed class ApiClient
                 };
             }
 
-            return await resp.Content.ReadFromJsonAsync<ChatResponseDto>(JsonOptions)
+            return await resp.Content.ReadFromJsonAsync<ChatResponseDto>(JsonOptions, ct)
                    ?? new ChatResponseDto { Reply = "(tukša atbilde)" };
         }
-        catch (TaskCanceledException)
+        catch (OperationCanceledException)
         {
             return new ChatResponseDto
             {
                 Reply =
-                    "Atbilde aizņēma pārāk ilgu laiku. Lokālais modelis uz CPU ir lēns — " +
-                    "aizver citas programmas un mēģini īsāku jautājumu, vai UPGRADE_MODEL.bat (Q4).",
+                    "Meklēšana aizņēma pārāk ilgu laiku. Mazajā lodziņā rezultāti jau bija redzami — " +
+                    "mēģini vēlreiz vai saīsini jautājumu.",
                 Mode = "error",
             };
         }

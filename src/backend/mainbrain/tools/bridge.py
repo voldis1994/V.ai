@@ -19,7 +19,7 @@ class DesktopToolBridge:
         self,
         token: str | None = None,
         pipe_name: str = "MainBrainToolBridge",
-        timeout_sec: float = 30.0,
+        timeout_sec: float = 8.0,
     ) -> None:
         self.token = token or os.environ.get("MAINBRAIN_BRIDGE_TOKEN") or os.environ.get(
             "MAINBRAIN_API_TOKEN", ""
@@ -77,16 +77,16 @@ class DesktopToolBridge:
     def _exchange(self, payload: dict[str, Any]) -> dict[str, Any]:
         # Windows named pipe caur pywin32 nav obligāts — izmantojam file API \\.\pipe\name
         pipe_path = rf"\\.\pipe\{self.pipe_name}"
-        deadline = time.time() + self.timeout_sec
+        deadline = time.time() + min(float(self.timeout_sec), 8.0)  # īss — nedeadlock'o /chat
         last_error: Exception | None = None
         while time.time() < deadline:
             try:
                 with open(pipe_path, "r+b", buffering=0) as pipe:
                     data = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
                     pipe.write(data)
-                    # lasa līdz newline
                     buf = bytearray()
-                    while True:
+                    read_deadline = time.time() + 5.0
+                    while time.time() < read_deadline:
                         chunk = pipe.read(1)
                         if not chunk:
                             break
@@ -95,8 +95,12 @@ class DesktopToolBridge:
                         buf.extend(chunk)
                         if len(buf) > 8_000_000:
                             raise RuntimeError("Tilta atbilde pārāk liela")
+                    else:
+                        raise TimeoutError("Desktop Tool Bridge lasīšanas timeouts")
+                    if not buf:
+                        raise RuntimeError("Tukša tilta atbilde")
                     return json.loads(buf.decode("utf-8"))
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
-                time.sleep(0.1)
+                time.sleep(0.05)
         raise RuntimeError(f"Neizdevās savienoties ar Desktop Tool Bridge: {last_error}")

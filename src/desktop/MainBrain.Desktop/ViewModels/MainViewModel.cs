@@ -318,12 +318,16 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            var result = await _api.ChatAsync(new ChatRequestDto
-            {
-                Message = userText,
-                SessionId = ChatSessionId,
-                WorkspacePath = string.IsNullOrWhiteSpace(WorkspacePath) ? null : WorkspacePath,
-            });
+            // Meklēšanai — īss timeouts, lai UI NEKAD neiesprūstu uz «Meklēju…»
+            var chatTimeout = preview.ShowPip ? TimeSpan.FromSeconds(22) : TimeSpan.FromMinutes(3);
+            var result = await _api.ChatAsync(
+                new ChatRequestDto
+                {
+                    Message = userText,
+                    SessionId = ChatSessionId,
+                    WorkspacePath = string.IsNullOrWhiteSpace(WorkspacePath) ? null : WorkspacePath,
+                },
+                timeout: chatTimeout);
             var reply = result.Reply ?? "";
             var display = HumanizeReply(reply);
             ChatOutput += $"\nMain Brain: {reply}";
@@ -335,21 +339,29 @@ public partial class MainViewModel : ObservableObject
 
             ApplyUiAction(result, alreadyOpenedUrl: preview.OpenedUrl);
 
-            // Kad uzdevums gatavs: īss brīdis paskatīties → AIZVER mazo lodziņu → teksta atbilde
+            // Īss brīdis paskatīties PiP → VIENMĒR aizver → rāda ko atrada
             if (preview.ShowPip)
             {
-                await Task.Delay(1600);
+                await Task.Delay(900);
             }
 
-            ShowImmersiveActivity = false;
-            MatrixStatus = "";
-            FormedAnswer = string.IsNullOrWhiteSpace(display) ? reply : display;
+            FinishVisibleAction(display, reply);
 
-            // Ja saglabāts/atvērts fails vai programma — rādi Windows logu (nevis Topmost overlay)
-            if (!string.IsNullOrWhiteSpace(result.OpenPath) ||
-                result.UiAction is "open_path" or "open_app")
+            // Saglabāto failu atver DESKTOP pēc atbildes (ne backend pipe laikā)
+            if (!string.IsNullOrWhiteSpace(result.OpenPath) && File.Exists(result.OpenPath))
             {
-                YieldForExternalAction?.Invoke(result.UiAction ?? "file");
+                try
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = result.OpenPath,
+                        UseShellExecute = true,
+                    });
+                }
+                catch
+                {
+                    // ignore
+                }
             }
 
             // Audio TIKAI ja backend atdeva SpeakText (= lietotājs teica pasaki/skaļi/…)
@@ -360,32 +372,32 @@ public partial class MainViewModel : ObservableObject
 
             OnPropertyChanged(nameof(ApprovalsVisibility));
         }
-        catch (TaskCanceledException)
-        {
-            ShowImmersiveActivity = false;
-            var err = "Ilgi nav atbildes — mēģini vēlreiz īsāk.";
-            ChatOutput += "\nMain Brain: " + err;
-            FormedAnswer = err;
-            MatrixStatus = "◈ LĒNI";
-        }
         catch (Exception ex)
         {
-            ShowImmersiveActivity = false;
             var msg = ex.Message ?? "";
             var err = msg.Contains("Timeout", StringComparison.OrdinalIgnoreCase) ||
                       msg.Contains("canceled", StringComparison.OrdinalIgnoreCase)
-                ? "Ilgi nav atbildes — mēģini vēlreiz īsāk."
+                ? "Meklēšana ieilga. Rezultāti bija mazajā lodziņā — mēģini vēlreiz."
                 : "Kļūda — " + msg;
             ChatOutput += "\nMain Brain: " + err;
-            FormedAnswer = err;
+            FinishVisibleAction(err, err);
             MatrixStatus = "◈ KĻŪDA";
         }
         finally
         {
+            // Garantija: PiP aizveras VIENMĒR
+            ShowImmersiveActivity = false;
             IsThinking = false;
             ActiveJobs = Math.Max(0, ActiveJobs - 1);
             await RefreshApprovalsAsync();
         }
+    }
+
+    private void FinishVisibleAction(string display, string fallback)
+    {
+        ShowImmersiveActivity = false;
+        MatrixStatus = "";
+        FormedAnswer = string.IsNullOrWhiteSpace(display) ? fallback : display;
     }
 
     private sealed record ActionPreview(bool ShowPip, string? OpenedUrl);
@@ -526,25 +538,37 @@ public partial class MainViewModel : ObservableObject
                 }
                 else
                 {
-                    EditorText = System.IO.File.ReadAllText(result.OpenPath);
+                    try
+                    {
+                        EditorText = System.IO.File.ReadAllText(result.OpenPath);
+                    }
+                    catch
+                    {
+                        // ignore
+                    }
+
                     if (!stayOnMatrix)
                     {
                         FocusSource = "editor";
                     }
                 }
 
-                YieldForExternalAction?.Invoke("file");
-                try
+                // Immersīvā: NE minimizē Matrix — fails tiks atvērts pēc FormedAnswer
+                if (!stayOnMatrix)
                 {
-                    Process.Start(new ProcessStartInfo
+                    YieldForExternalAction?.Invoke("file");
+                    try
                     {
-                        FileName = result.OpenPath,
-                        UseShellExecute = true,
-                    });
-                }
-                catch
-                {
-                    // ignore
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = result.OpenPath,
+                            UseShellExecute = true,
+                        });
+                    }
+                    catch
+                    {
+                        // ignore
+                    }
                 }
             }
 
