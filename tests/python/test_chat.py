@@ -41,6 +41,9 @@ def test_intent_search_learn_explain_build():
     # Programmas — BUILD
     assert classify_intent("uztaisi Python failu hello.py") == Intent.BUILD
     assert classify_intent("sameklē un uztaisi kalkulatoru Python") == Intent.BUILD
+    # «iemācies UN uztaisi» = IZPILDE (nevis tikai runāšana)
+    assert classify_intent("iemācies un uztaisi hello.py") == Intent.BUILD
+    assert classify_intent("iemācies: uztaisi sejas atpazīšanas programmu") == Intent.BUILD
     assert classify_intent("atver notepad") == Intent.OPEN
     assert classify_intent("atver pārlūku") == Intent.OPEN
 
@@ -52,6 +55,11 @@ def test_is_junk_detects_gaidis_loop():
     )
     assert _is_junk(junk)
     assert not _is_junk("Python ir programmēšanas valoda.")
+    audio_junk = (
+        "Nevaru atbildēt audio, tikai tev palīdzot ar teksta jautājumiem "
+        "un uzdevumu risināšanu. Ja vēlies zaudētu informāciju..."
+    )
+    assert _is_junk(audio_junk)
 
 
 def test_local_greet_without_llm():

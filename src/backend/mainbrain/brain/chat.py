@@ -47,7 +47,13 @@ _BAD_REPLY = re.compile(
     r"lūdzu,\s*izveidojiet|riks,\s*ka\s*tev\s*ir|"
     r"tā\s+ir\s+jābūt\s+jautājumu|kādā\s+arī\s+gaidis|"
     r"informācij[ua]\s+par\s+gaidij|"
-    r"tu\s+zini\s+latvijas\s+valod"
+    r"tu\s+zini\s+latvijas\s+valod|"
+    # Ekrānšāviņa muļķības — modelis izdomā «nevaru audio» u.tml.
+    r"nevaru\s+atbildēt\s+audio|tikai\s+tev\s+palīdzot|"
+    r"zaudētu\s+informāciju|paziņojiet\s+man\s+par\s+to|"
+    r"as an ai|i('m| am) (just |only )?(a )?language model|"
+    r"es\s+nevaru\s+(palīdzēt|izpildīt|darīt)\s+šo|"
+    r"diemžēl\s+es\s+nevaru\s+izpildīt"
     r")"
 )
 
@@ -182,6 +188,7 @@ class ChatService:
             return resp
 
         if intent in {Intent.LEARN, Intent.EXPLAIN}:
+            # Ja «iemācies» + izveido — tas jau ir BUILD; šeit tikai tīra mācīšanās
             local_hits = self._search_local_knowledge(topic)
             web_hits: list[str] = []
             if self._internet_enabled():
@@ -193,10 +200,25 @@ class ChatService:
                 history=history,
                 local_hits=local_hits + web_hits,
             )
-            if reply and not _is_junk(reply):
-                self._remember(topic, reply, kind="learn" if intent == Intent.LEARN else "explain")
-                if intent == Intent.LEARN:
-                    reply = f"{reply}\n\n[Iemācīts] Saglabāju lokālajā zināšanu bāzē — nākamreiz izmantošu."
+            if _is_junk(reply):
+                # Neļaujam muļķīgai LLM atbildei — izmantojam faktus / skaidru statusu
+                if web_hits or local_hits:
+                    reply = "\n".join((local_hits + web_hits)[:3])
+                else:
+                    reply = (
+                        f"Apgūstu tēmu «{topic}». "
+                        "Šobrīd maz gatavu faktu — mēģini «sameklē {topic}» vai UPGRADE_MODEL.bat."
+                    ).replace("{topic}", topic)
+            saved = self._remember(
+                topic, reply, kind="learn" if intent == Intent.LEARN else "explain"
+            )
+            if intent == Intent.LEARN:
+                status = (
+                    "[Iemācīts] Saglabāju lokālajā zināšanu bāzē — nākamreiz izmantošu."
+                    if saved
+                    else "[Atmiņa] Šī atbilde jau bija saglabāta vai bija pārāk īsa."
+                )
+                reply = f"{reply}\n\n{status}"
             return self._finish(session, history, reply)
 
         # Vispārīgs chat — VIENMĒR atmiņa; jautājumiem arī internets; pēc tam mācās
@@ -213,11 +235,21 @@ class ChatService:
             history=history,
             local_hits=local_hits + web_hits,
         )
+        if _is_junk(reply):
+            if local_hits or web_hits:
+                reply = "\n".join((local_hits + web_hits)[:3])
+            else:
+                reply = (
+                    "Nesapratu skaidri. Spied konkrēti:\n"
+                    "• «uztaisi …» — izpildīšu uzdevumu\n"
+                    "• «iemācies …» — saglabāšu zināšanās\n"
+                    "• «sameklē …» — internets + pārlūks\n"
+                    "• «atver notepad» — fiziski atvēršu"
+                )
         learned = False
         if reply and not _is_junk(reply):
             learned = self._remember(topic or user_msg, reply, kind="chat")
         if learned and self._looks_like_question(user_msg):
-            # Klusa norāde — lietotājs redz, ka sistēma mācās
             reply = f"{reply}\n\n〔atmiņa〕 Saglabāju šo atbildi nākamajām reizēm."
         return self._finish(session, history, reply)
 
@@ -807,6 +839,11 @@ class ChatService:
                 parts.append(f"(Neizdevās atvērt failu: {exc})")
 
         summary = "\n".join(parts)
+        # Mācās no izpildes — nākamreiz zinās, ko darīja
+        self._remember(goal[:120], summary, kind="execute")
+        if "iemāc" in goal.lower() or "learn" in goal.lower():
+            parts.append("[Iemācīts] Saglabāju arī šo izpildi zināšanu bāzē.")
+            summary = "\n".join(parts)
         return self._finish(
             session,
             history,

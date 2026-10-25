@@ -28,11 +28,12 @@ _BUILD_RE = re.compile(
     r"(?i)\b("
     r"izveido|izveidot|uztaisi|uztaisīt|uzraksti|uzrakstīt|"
     r"uzprogrammē|uzprogrammēt|uzbūvē|uzbūvēt|"
-    r"izlabo|labot|palaid|palaist|instalē|instalēt|"
+    r"izlabo|labot|instalē|instalēt|"
     r"kompilē|build|deploy|dzēs|izdzēs|"
     r"uzraksti\s+kod|izveido\s+fail|izveido\s+programm|"
     r"uztaisi\s+programm|make\s+a\s+|create\s+a\s+|write\s+a\s+|"
-    r"open\s+notepad|atver\s+notepad|atver\s+pārlūk"
+    # «palaid skriptu/testu» = build; tīrs «atver notepad» = OPEN (zemāk)
+    r"palaid\s+(skript|test|kod|python|program)"
     r")\b"
 )
 
@@ -167,32 +168,42 @@ def classify_intent(text: str, *, force_execute: bool | None = None) -> Intent:
         if len(parts) >= 2:
             return Intent.PERSON
 
-    # Mācīšanās / skaidrojums PIRMS build — «iemācies kā uztaisīt» ≠ izpilde
+    explicit_do = bool(
+        re.search(
+            r"(?i)\b("
+            r"izveido|uztaisi|uzraksti|uzprogrammē|uzbūvē|"
+            r"build|create|make|write\s+a|deploy|instalē|kompilē|"
+            r"izlabo|labo\s+kod|palaid\s+skript|izpildi\s+uzdev"
+            r")\b",
+            t,
+        )
+    )
+    howto_only = bool(re.search(r"(?i)\b(kā\s+uztais|kā\s+izveidot|how\s+to\s+)", t)) and not explicit_do
+
+    # Atver programmu / pārlūku — PIRMS build, ja nav izveido/uztaisi
+    if _OPEN_RE.search(t) and not _SEARCH_RE.search(t) and not explicit_do:
+        # «atver un uztaisi» already has explicit_do; tīrs «atver notepad» = OPEN
+        if not _BUILD_RE.search(t):
+            return Intent.OPEN
+
+    # BUILD PIRMS «iemācies» — «iemācies UN uztaisi» = IZPILDE (nevis tikai runāšana)
+    if force_execute is not False and (_BUILD_RE.search(t) or explicit_do):
+        if howto_only:
+            if _SEARCH_RE.search(t):
+                return Intent.SEARCH
+            if _LEARN_RE.search(t):
+                return Intent.LEARN
+            return Intent.EXPLAIN
+        if t.endswith("?") and not explicit_do and not _BUILD_RE.search(t):
+            pass
+        else:
+            return Intent.BUILD
+
+    # Tīra mācīšanās / skaidrojums (bez izveido/uztaisi)
     if _LEARN_RE.search(t):
         return Intent.LEARN
     if _EXPLAIN_RE.search(t):
         return Intent.EXPLAIN
-
-    # Atver programmu / pārlūku (ja nav «sameklē» — to jau apstrādā SEARCH)
-    if _OPEN_RE.search(t) and not _SEARCH_RE.search(t):
-        # «atver un uztaisi» = BUILD; tīrs «atver notepad» = OPEN
-        if not re.search(r"(?i)\b(izveido|uztaisi|uzraksti|uzprogrammē)\b", t):
-            return Intent.OPEN
-
-    # BUILD — bet «kā uztaisīt…?» ir mācību jautājums
-    if force_execute is not False and _BUILD_RE.search(t):
-        howto = bool(re.search(r"(?i)\b(kā\s+uztais|how\s+to\s+)", t))
-        explicit_do = bool(
-            re.search(r"(?i)\b(izveido|uztaisi|uzraksti|uzprogrammē|build|create|make)\b", t)
-        )
-        if howto and not explicit_do:
-            if _SEARCH_RE.search(t):
-                return Intent.SEARCH
-            return Intent.EXPLAIN
-        if t.endswith("?") and not explicit_do:
-            pass
-        else:
-            return Intent.BUILD
 
     if _SEARCH_RE.search(t):
         return Intent.SEARCH
