@@ -16,6 +16,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _statusText = "Inicializē...";
     [ObservableProperty] private string _activeModel = "Nav konfigurēts";
     [ObservableProperty] private string _resourceText = "CPU/RAM: —";
+    [ObservableProperty] private string _agentCountText = "Aģenti: —";
     [ObservableProperty] private bool _isOffline;
     [ObservableProperty] private int _activeJobs;
     [ObservableProperty] private bool _isFocusMode = true;
@@ -105,13 +106,25 @@ public partial class MainViewModel : ObservableObject
                 Agents.Add(agent);
             }
 
+            AgentCountText = $"Aģenti: {Agents.Count}/50";
             await RefreshApprovalsAsync();
             await LoadLayoutAsync();
-            InspectorText = $"Ielādēti {Agents.Count} aģenti. Režīms: {(IsFocusMode ? "Focus" : "Multi")}.";
+            InspectorText =
+                $"Ielādēti {Agents.Count} aģenti (konfigurācijas kodā, nevis atsevišķi AI modeļi).\n" +
+                "Tie koplieto lokālo GGUF caur llama-server.\n" +
+                $"Režīms: {(IsFocusMode ? "Focus" : "Multi")}.\n" +
+                "Sarakstu skatiet: augšā poga «Aģenti».";
+            ChatOutput =
+                "Sveiki! Esmu Main Brain — varam brīvi sarunāties latviešu valodā.\n" +
+                $"Sistēmā ir {Agents.Count} specializēti aģenti (programmētājs, pārlūks, Windows u.c.).\n" +
+                "Tie NAV 50 atsevišķi lejupielādējami modeļi — tie ir lomas, kas izmanto jūsu GGUF.\n" +
+                "Rakstiet šeit; «Izveido…» / «Izpildi: …» palaizīs aģentus.\n" +
+                "Saraksts: poga «Aģenti» augšā.";
         }
         catch (Exception ex)
         {
             StatusText = "Kļūda";
+            AgentCountText = "Aģenti: nav (backend?)";
             ChatOutput += "\n" + ex.Message;
         }
     }

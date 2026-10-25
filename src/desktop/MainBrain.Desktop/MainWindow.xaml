@@ -22,6 +22,7 @@
           <TextBlock Text="{Binding StatusText}" Margin="16,0,0,0" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
           <TextBlock Text="{Binding ActiveModel}" Margin="12,0,0,0" Foreground="{StaticResource MutedBrush}" MaxWidth="280" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
           <TextBlock Text="{Binding ActiveJobs, StringFormat=Darbi: {0}}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+          <TextBlock Text="{Binding AgentCountText}" Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"/>
         </StackPanel>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
           <Button Content="Aģenti" Style="{StaticResource TaskBtn}" Command="{Binding ToggleAgentsCommand}"/>
