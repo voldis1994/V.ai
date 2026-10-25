@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using MainBrain.Desktop.Services;
 using MainBrain.Desktop.ViewModels;
@@ -13,6 +14,20 @@ public partial class MainWindow : Window
         InitializeComponent();
         WindowState = WindowState.Maximized;
         Loaded += OnLoaded;
+    }
+
+    private void ChatBox_OnKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || Keyboard.Modifiers != ModifierKeys.None)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (DataContext is MainViewModel vm && vm.SendGoalCommand.CanExecute(null))
+        {
+            vm.SendGoalCommand.Execute(null);
+        }
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)

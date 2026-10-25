@@ -12,10 +12,12 @@ from fastapi.responses import JSONResponse
 
 from mainbrain import __version__
 from mainbrain.agents.runtime import AgentRuntime
+from mainbrain.brain.chat import ChatService
 from mainbrain.brain.orchestrator import MainBrain
 from mainbrain.contracts.schemas import (
     AgentInvokeRequest,
     ApprovalRequest,
+    ChatRequest,
     ModelHealth,
     RunGoalRequest,
     ToolRequest,
@@ -61,6 +63,7 @@ class AppState:
             self.scheduler,
             models=self.models,
         )
+        self.chat = ChatService(self.models, self.brain)
         self.subscribers: list[WebSocket] = []
 
 
@@ -156,6 +159,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = await st.brain.run_goal(body)
         payload = response.model_dump(mode="json")
         await _broadcast(st, {"type": "goal_finished", "data": payload})
+        return payload
+
+    @app.post("/chat", dependencies=[Depends(require_auth)])
+    async def chat(body: ChatRequest, st: AppState = Depends(state)) -> dict[str, Any]:
+        """Briva saruna ar Main Brain; vajadzibas gadijuma palaiz aģentu izpildi."""
+        if not (body.message or "").strip():
+            raise HTTPException(400, "Tukša ziņa")
+        response = await st.chat.chat(body)
+        payload = response.model_dump(mode="json")
+        await _broadcast(st, {"type": "chat", "data": {"mode": response.mode, "session_id": response.session_id}})
         return payload
 
     @app.post("/tools/execute", dependencies=[Depends(require_auth)])

@@ -40,6 +40,14 @@ public sealed class ApiClient
         return await JsonSerializer.DeserializeAsync<JsonElement>(stream, JsonOptions);
     }
 
+    public async Task<ChatResponseDto> ChatAsync(ChatRequestDto request)
+    {
+        var resp = await _http.PostAsJsonAsync("/chat", request, JsonOptions);
+        resp.EnsureSuccessStatusCode();
+        return await resp.Content.ReadFromJsonAsync<ChatResponseDto>(JsonOptions)
+               ?? new ChatResponseDto { Reply = "(tukša atbilde)" };
+    }
+
     public async Task StopAsync() => await _http.PostAsync("/control/stop", null);
     public async Task PauseAsync() => await _http.PostAsync("/control/pause", null);
     public async Task ResumeAsync() => await _http.PostAsync("/control/resume", null);

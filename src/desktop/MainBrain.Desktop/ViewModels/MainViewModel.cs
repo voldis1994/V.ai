@@ -20,7 +20,12 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private int _activeJobs;
     [ObservableProperty] private bool _isFocusMode = true;
     [ObservableProperty] private string _chatInput = "";
-    [ObservableProperty] private string _chatOutput = "Sveicināti! Ievadiet mērķi latviešu valodā.";
+    [ObservableProperty] private string _chatOutput =
+        "Sveiki! Esmu Main Brain — varam brīvi sarunāties latviešu valodā.\n" +
+        "Jautā, plāno, vai lūdz izpildīt (piem. «Izveido Python skriptu…»).\n" +
+        "Padoms: «Izpildi: …» piespiedīs aģentu orķestrāciju.";
+    [ObservableProperty] private string _chatSessionId = "ui";
+    [ObservableProperty] private bool _isThinking;
     [ObservableProperty] private string _terminalOutput = "";
     [ObservableProperty] private AgentDefinitionDto? _selectedAgent;
     [ObservableProperty] private string _inspectorText = "Izvēlieties aģentu vai palaidiet uzdevumu.";
@@ -150,7 +155,7 @@ public partial class MainViewModel : ObservableObject
 
     private static string PanelLabel(string source) => source switch
     {
-        "home" => "Sākums — gaida uzdevumu",
+        "home" => "Saruna",
         "browser" => "Iegultais pārlūks",
         "editor" => "Redaktors",
         "terminal" => "Terminālis",
@@ -219,38 +224,51 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task SendGoalAsync()
     {
-        if (string.IsNullOrWhiteSpace(ChatInput))
+        if (string.IsNullOrWhiteSpace(ChatInput) || IsThinking)
         {
             return;
         }
 
+        var userText = ChatInput.Trim();
+        ChatInput = "";
         ActiveJobs++;
-        ChatOutput += $"\n\n> {ChatInput}";
+        IsThinking = true;
+        ChatOutput += $"\n\nTu: {userText}";
+        // Saruna ir galvenā virsma — paliekam chat/home, ja nav fiksēts cits panelis
+        if (!FocusPinned && FocusSource is "home" or "log")
+        {
+            FocusSource = "home";
+        }
+
         try
         {
-            var result = await _api.RunGoalAsync(new RunGoalRequestDto
+            var result = await _api.ChatAsync(new ChatRequestDto
             {
-                Text = ChatInput,
+                Message = userText,
+                SessionId = ChatSessionId,
                 WorkspacePath = string.IsNullOrWhiteSpace(WorkspacePath) ? null : WorkspacePath,
             });
-            ChatOutput += "\n" + SummarizeGoal(result);
-            TerminalOutput += $"\n[{DateTime.Now:HH:mm:ss}] Mērķis pabeigts";
-            InspectorText = "Uzdevuma rezultāts saņemts.";
-            ShowInspector = true;
-            if (!FocusPinned)
+            ChatOutput += $"\n\nMain Brain: {result.Reply}";
+            if (result.Mode == "execute")
             {
-                FocusSource = "log";
+                TerminalOutput += $"\n[{DateTime.Now:HH:mm:ss}] Izpilde: {result.GoalStatus}";
+                InspectorText = $"Uzdevums izpildīts. Statuss: {result.GoalStatus}";
+                ShowInspector = true;
+                if (!FocusPinned)
+                {
+                    FocusSource = "log";
+                }
             }
             OnPropertyChanged(nameof(ApprovalsVisibility));
         }
         catch (Exception ex)
         {
-            ChatOutput += "\nKļūda: " + ex.Message;
+            ChatOutput += "\n\nMain Brain: Kļūda — " + ex.Message;
         }
         finally
         {
+            IsThinking = false;
             ActiveJobs = Math.Max(0, ActiveJobs - 1);
-            ChatInput = "";
             await RefreshApprovalsAsync();
         }
     }

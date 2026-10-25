@@ -105,6 +105,22 @@ public sealed class RunGoalRequestDto
     public List<string> SuccessCriteria { get; set; } = new();
 }
 
+public sealed class ChatRequestDto
+{
+    public string Message { get; set; } = "";
+    public string SessionId { get; set; } = "default";
+    public string? WorkspacePath { get; set; }
+    public bool? ForceExecute { get; set; }
+}
+
+public sealed class ChatResponseDto
+{
+    public string Reply { get; set; } = "";
+    public string Mode { get; set; } = "chat";
+    public string SessionId { get; set; } = "default";
+    public string? GoalStatus { get; set; }
+}
+
 public sealed class HealthResponseDto
 {
     public string Status { get; set; } = "";

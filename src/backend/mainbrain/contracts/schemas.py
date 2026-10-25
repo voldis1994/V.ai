@@ -272,3 +272,23 @@ class RunGoalResponse(BaseModel):
     events: list[ProgressEvent] = Field(default_factory=list)
     artifacts: list[Artifact] = Field(default_factory=list)
     verification: VerificationReport | None = None
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    session_id: str = "default"
+    workspace_path: str | None = None
+    force_execute: bool | None = None
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    mode: str = "chat"  # chat | execute
+    session_id: str = "default"
+    goal_status: str | None = None
+    messages: list[ChatMessage] = Field(default_factory=list)
