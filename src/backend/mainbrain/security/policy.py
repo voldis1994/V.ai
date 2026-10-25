@@ -32,6 +32,10 @@ SAFE_TOOLS = {
     "dotnet.build",
     "web.search",
     "http.fetch",
+    "camera.capture",
+    "face.detect",
+    "vision.analyze",
+    "audio.speak",
 }
 
 APPROVAL_TOOLS = {
@@ -189,11 +193,18 @@ class PolicyEngine:
                     impact="Python kods ar riskantām konstrukcijām",
                 )
 
-        # Interneta rīki — full_access / SAFE
-        if request.tool in {"web.search", "http.fetch"}:
+        # Internets / kamera / audio / sejas — atļauti (lokāli)
+        if request.tool in {
+            "web.search",
+            "http.fetch",
+            "camera.capture",
+            "face.detect",
+            "vision.analyze",
+            "audio.speak",
+        }:
             return PolicyDecision(
                 allowed=True,
-                reason="Interneta rīks atļauts",
+                reason="Sense/interneta rīks atļauts",
                 risk_category=RiskCategory.MEDIUM,
                 redacted_args=redact_secrets(request.arguments),
             )

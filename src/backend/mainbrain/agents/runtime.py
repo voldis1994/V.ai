@@ -301,6 +301,54 @@ class AgentRuntime:
                 tool_results=[w1, run],
             )
 
+        # Sejas atpazīšana / kamera
+        if any(k in g for k in ("seja", "face", "kamer", "camera", "atpazīšan", "recognition", "webcam")):
+            from mainbrain.tools.sense import face_recognition_app_source
+
+            module = ws / "face_camera_app.py"
+            req = ws / "requirements-face.txt"
+            readme = ws / "FACE_APP_LV.md"
+            code = face_recognition_app_source()
+            w1 = self._tool(agent, "files.write", {"path": str(module), "content": code})
+            w2 = self._tool(
+                agent,
+                "files.write",
+                {
+                    "path": str(req),
+                    "content": "opencv-python>=4.8\n",
+                },
+            )
+            w3 = self._tool(
+                agent,
+                "files.write",
+                {
+                    "path": str(readme),
+                    "content": (
+                        "# Sejas kamera — Main Brain OS\n\n"
+                        "```bat\npip install -r requirements-face.txt\n"
+                        "python face_camera_app.py\n```\n\n"
+                        "Q = iziet, S = saglabāt seju `enrolled_faces/`.\n"
+                        "Īsta vārdu atpazīšana (1:N) — nākamais solis ar embeddings.\n"
+                    ),
+                },
+            )
+            return self._ok(
+                agent,
+                "Sejas kameras programma izveidota",
+                {
+                    "files_changed": [str(module), str(req), str(readme)],
+                    "summary": "face_camera_app.py",
+                    "code": code[:500],
+                    "model_note": model_note,
+                    "next": "pip install -r requirements-face.txt && python face_camera_app.py",
+                },
+                artifacts=[
+                    Artifact(kind="code", path=str(module), summary="face_camera_app.py"),
+                    Artifact(kind="doc", path=str(readme), summary="FACE_APP_LV.md"),
+                ],
+                tool_results=[w1, w2, w3],
+            )
+
         # Explicit faila nosaukums: «izveido failu foo.py»
         named = re.search(r"(?i)\b([\w\-]+)\.py\b", goal or "")
         if named and "csv" not in g and "atskait" not in g and "invent" not in g:
@@ -676,12 +724,49 @@ def test_write_report():
         return self._ok(agent, "UIA statuss", {"element": None, "result": result.output, "model_note": model_note}, tool_results=[result])
 
     def _screen_vision(self, agent, goal, inputs, model_note):
+        g = (goal or "").lower()
+        use_camera = bool(inputs.get("use_camera")) or any(
+            k in g for k in ("kamer", "camera", "seja", "face", "webcam", "redzi")
+        )
+        tool_results = []
+        if use_camera:
+            vision = self._tool(agent, "vision.analyze", {"camera_index": int(inputs.get("camera_index") or 0)})
+            tool_results.append(vision)
+            faces = self._tool(agent, "face.detect", {"camera_index": int(inputs.get("camera_index") or 0)})
+            tool_results.append(faces)
+            out = vision.output if isinstance(vision.output, dict) else {}
+            face_out = faces.output if isinstance(faces.output, dict) else {}
+            notes = out.get("description") or face_out.get("summary") or "Kamera/analīze"
+            if inputs.get("speak") or "pasaki" in g or "audio" in g:
+                speak = self._tool(agent, "audio.speak", {"text": str(notes)[:500], "lang": "lv"})
+                tool_results.append(speak)
+            return self._ok(
+                agent,
+                "Kameras / sejas analīze",
+                {
+                    "elements": face_out.get("faces") or [],
+                    "notes": notes,
+                    "face_count": face_out.get("face_count", 0),
+                    "path": out.get("path") or face_out.get("path"),
+                    "annotated_path": face_out.get("annotated_path"),
+                    "model_note": model_note,
+                },
+                tool_results=tool_results,
+            )
+
         result = self._tool(agent, "screen.capture", {})
+        tool_results.append(result)
         return self._ok(
             agent,
-            "Vizuālā uztvere",
-            {"elements": [], "notes": result.output.get("message") if isinstance(result.output, dict) else "Nav pieejams", "model_note": model_note},
-            tool_results=[result],
+            "Ekrāna uztvere",
+            {
+                "elements": [],
+                "notes": result.output.get("message")
+                if isinstance(result.output, dict)
+                else "Nav pieejams",
+                "model_note": model_note,
+            },
+            tool_results=tool_results,
         )
 
     def _input_operator(self, agent, goal, inputs, model_note):

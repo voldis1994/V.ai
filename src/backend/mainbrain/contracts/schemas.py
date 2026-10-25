@@ -296,4 +296,6 @@ class ChatResponse(BaseModel):
     ui_action: str | None = None  # open_browser | open_editor | open_path | open_app | none
     open_url: str | None = None
     open_path: str | None = None
-    focus: str | None = None  # home | browser | editor | terminal
+    focus: str | None = None  # home | browser | editor | terminal | live
+    speak_text: str | None = None  # ja aizpildīts — Desktop/backends runā skaļi
+    image_path: str | None = None  # kameras/sejas kadrs Dzīvajam skatam

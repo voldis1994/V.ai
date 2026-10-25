@@ -92,6 +92,10 @@ class ToolProxy:
             "resources.inspect": self._resources_inspect,
             "web.search": self._web_search,
             "http.fetch": self._http_fetch,
+            "camera.capture": self._camera_capture,
+            "face.detect": self._face_detect,
+            "vision.analyze": self._vision_analyze,
+            "audio.speak": self._audio_speak,
         }
         self._processes: dict[int, subprocess.Popen[str]] = {}
         self._owned_pids: set[int] = set()
@@ -500,3 +504,47 @@ class ToolProxy:
                     timeout=60
                 )
         return asyncio.run(http_fetch(url, max_chars=max_chars))
+
+    def _camera_capture(self, request: ToolRequest) -> dict[str, Any]:
+        from mainbrain.tools.sense import camera_capture
+
+        idx = int(request.arguments.get("camera_index") or request.arguments.get("index") or 0)
+        return camera_capture(camera_index=idx, filename=request.arguments.get("filename"))
+
+    def _face_detect(self, request: ToolRequest) -> dict[str, Any]:
+        from mainbrain.tools.sense import face_detect
+
+        return face_detect(
+            request.arguments.get("path") or request.arguments.get("image"),
+            camera_index=int(request.arguments.get("camera_index") or 0),
+        )
+
+    def _vision_analyze(self, request: ToolRequest) -> dict[str, Any]:
+        from mainbrain.tools.sense import (
+            camera_capture,
+            describe_image_basic,
+            face_detect,
+            image_to_data_url,
+        )
+
+        path = request.arguments.get("path") or request.arguments.get("image")
+        if not path:
+            cap = camera_capture(camera_index=int(request.arguments.get("camera_index") or 0))
+            if not cap.get("ok"):
+                return cap
+            path = cap["path"]
+        faces = face_detect(path)
+        basic = describe_image_basic(str(path), faces if faces.get("ok") else None)
+        # Mēģina vision modeli, ja pieejams (GGUF / OpenAI-compatible)
+        data_url = image_to_data_url(str(path))
+        basic["vision_model"] = None
+        basic["data_url_ready"] = bool(data_url)
+        return basic
+
+    def _audio_speak(self, request: ToolRequest) -> dict[str, Any]:
+        from mainbrain.tools.sense import speak_text
+
+        return speak_text(
+            str(request.arguments.get("text") or request.arguments.get("message") or ""),
+            lang=str(request.arguments.get("lang") or "lv"),
+        )

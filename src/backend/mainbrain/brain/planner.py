@@ -205,6 +205,42 @@ class AiPlanner:
 
     def _fallback_for(self, goal_text: str) -> PlannedDag:
         text = goal_text.lower()
+        if any(
+            k in text
+            for k in ("seja", "face", "kamer", "camera", "webcam", "atpazīšan", "recognition")
+        ) and any(k in text for k in ("izveido", "uztaisi", "uzraksti", "build", "create", "programm")):
+            return PlannedDag(
+                summary="Sejas/kameras programmas izveide",
+                source="fallback_face_app",
+                tasks=[
+                    PlannedTask(
+                        id="t1",
+                        title="Uzrakstīt sejas kameras programmu",
+                        description=goal_text,
+                        agent_id="PythonDeveloper",
+                    ),
+                    PlannedTask(
+                        id="t2",
+                        title="Pārbaudīt / dokumentēt",
+                        description="Pārbaudīt failus",
+                        agent_id="ResultReviewer",
+                        depends_on=["t1"],
+                    ),
+                ],
+            )
+        if any(k in text for k in ("kamer", "camera", "seja", "face", "redzi mani", "webcam")):
+            return PlannedDag(
+                summary="Kameras / sejas analīze",
+                source="fallback_camera_vision",
+                tasks=[
+                    PlannedTask(
+                        id="t1",
+                        title="Analizēt kameru un sejas",
+                        description=goal_text,
+                        agent_id="ScreenVisionOperator",
+                    ),
+                ],
+            )
         if any(k in text for k in ("samekl", "meklē", "atrast", "google", "search", "informācij")):
             return PlannedDag(
                 summary="Interneta meklēšana + pārlūka atvēršana",

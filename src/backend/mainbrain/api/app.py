@@ -119,7 +119,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "resources": resources.output,
             "models": [m.model_dump(mode="json") for m in models],
             "language": "lv",
-            "features": ["chat", "goals", "agents50", "llama.cpp", "web.search", "full_pc"],
+            "features": [
+                "chat",
+                "goals",
+                "agents50",
+                "llama.cpp",
+                "web.search",
+                "full_pc",
+                "camera",
+                "face.detect",
+                "audio.speak",
+            ],
         }
 
     @app.get("/auth/status", dependencies=[Depends(require_auth)])

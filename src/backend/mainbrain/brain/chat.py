@@ -123,6 +123,16 @@ class ChatService:
         if intent == Intent.OPEN:
             return self._physical_open(req, session, history, user_msg)
 
+        # Kamera / sejas / «ko tu redzi» — fiziska uztvere
+        if re.search(
+            r"(?i)\b(kamer|camera|webcam|seja|face|ko\s+tu\s+redzi|redzi\s+mani|"
+            r"atpazī\w*\s+sej|face\s+recogn)",
+            user_msg,
+        ) and intent != Intent.BUILD:
+            # Ja lūdz izveidot programmu — BUILD jau apstrādāts; šeit = analizē tagad
+            if not re.search(r"(?i)\b(izveido|uztaisi|uzraksti|uzprogrammē)\b", user_msg):
+                return await self._camera_sense(req, session, history, user_msg)
+
         if intent == Intent.GREET:
             return self._finish(session, history, "Sveiki! Kā varu palīdzēt?")
 
@@ -195,6 +205,9 @@ class ChatService:
         open_url: str | None = None,
         open_path: str | None = None,
         focus: str | None = None,
+        speak_text: str | None = None,
+        image_path: str | None = None,
+        user_msg: str | None = None,
     ) -> ChatResponse:
         cleaned: list[dict[str, str]] = []
         for m in history:
@@ -203,6 +216,28 @@ class ChatService:
             cleaned.append(m)
         history[:] = cleaned[-10:]
         history.append({"role": "assistant", "content": reply})
+
+        # Audio: ja lietotājs lūdz runāt / pasaki
+        speak = speak_text
+        probe = (user_msg or "").lower()
+        if speak is None and re.search(r"(?i)\b(pasaki|runā|speak|audio|skaļi|izrunā)\b", probe):
+            speak = reply
+        if speak:
+            actor_tools = getattr(getattr(self.brain, "runtime", None), "tools", None)
+            if actor_tools is not None:
+                try:
+                    from mainbrain.contracts.schemas import ToolRequest
+
+                    actor_tools.execute(
+                        ToolRequest(
+                            tool="audio.speak",
+                            arguments={"text": speak[:800], "lang": "lv"},
+                            agent_id="ChatService",
+                        )
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+
         return ChatResponse(
             reply=reply,
             mode=mode,
@@ -213,6 +248,64 @@ class ChatService:
             open_url=open_url,
             open_path=open_path,
             focus=focus,
+            speak_text=speak,
+            image_path=image_path,
+        )
+
+    async def _camera_sense(
+        self,
+        req: ChatRequest,
+        session: str,
+        history: list[dict[str, str]],
+        user_msg: str,
+    ) -> ChatResponse:
+        tools = getattr(getattr(self.brain, "runtime", None), "tools", None)
+        if tools is None:
+            return self._finish(
+                session,
+                history,
+                "Kameras rīki nav pieejami. Instalē OpenCV: scripts\\install_sense.ps1",
+                user_msg=user_msg,
+            )
+        from mainbrain.contracts.schemas import ToolRequest
+
+        vision = tools.execute(
+            ToolRequest(tool="vision.analyze", arguments={"camera_index": 0}, agent_id="ChatService")
+        )
+        faces = tools.execute(
+            ToolRequest(tool="face.detect", arguments={"camera_index": 0}, agent_id="ChatService")
+        )
+        vout = vision.output if isinstance(vision.output, dict) else {}
+        fout = faces.output if isinstance(faces.output, dict) else {}
+        if not vision.ok and not faces.ok:
+            err = vout.get("error") or fout.get("error") or vision.error or faces.error
+            return self._finish(
+                session,
+                history,
+                f"Kamera/analīze neizdevās: {err}. "
+                "Pārbaudi kameras atļaujas un palaid scripts\\install_sense.ps1",
+                user_msg=user_msg,
+            )
+        desc = vout.get("description") or fout.get("summary") or "Kadrs saglabāts."
+        path = fout.get("annotated_path") or vout.get("path") or fout.get("path")
+        reply = (
+            f"{desc}\n"
+            f"Sejas: {fout.get('face_count', 0)}. "
+            f"Kadrs: {path or '—'}.\n"
+            "Ja gribi programmu: «izveido sejas atpazīšanas programmu»."
+        )
+        # Runā rezultātu skaļi
+        return self._finish(
+            session,
+            history,
+            reply,
+            mode="act",
+            ui_action="open_path",
+            open_path=path,
+            focus="live",
+            speak_text=desc,
+            image_path=path,
+            user_msg=user_msg,
         )
 
     async def _search_and_act(

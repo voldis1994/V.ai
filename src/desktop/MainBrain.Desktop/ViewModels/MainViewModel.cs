@@ -333,8 +333,8 @@ public partial class MainViewModel : ObservableObject
         {
             if (!string.IsNullOrWhiteSpace(result.Focus))
             {
-                // Īslaicīgi izejam no tīra Matrix, lai rādītu pārlūku/redaktoru
-                if (result.Focus is "browser" or "editor" or "terminal")
+                // Īslaicīgi izejam no tīra Matrix, lai rādītu pārlūku/redaktoru/kameru
+                if (result.Focus is "browser" or "editor" or "terminal" or "live")
                 {
                     ImmersiveMode = false;
                     IsFocusMode = true;
@@ -359,9 +359,25 @@ public partial class MainViewModel : ObservableObject
                 }
             }
 
+            if (!string.IsNullOrWhiteSpace(result.ImagePath) && File.Exists(result.ImagePath))
+            {
+                LiveImagePath = result.ImagePath;
+                FocusSource = "live";
+            }
+
             if (!string.IsNullOrWhiteSpace(result.OpenPath) && File.Exists(result.OpenPath))
             {
-                EditorText = File.ReadAllText(result.OpenPath);
+                var ext = Path.GetExtension(result.OpenPath).ToLowerInvariant();
+                if (ext is ".png" or ".jpg" or ".jpeg" or ".bmp" or ".webp")
+                {
+                    LiveImagePath = result.OpenPath;
+                    FocusSource = "live";
+                }
+                else
+                {
+                    EditorText = File.ReadAllText(result.OpenPath);
+                }
+
                 try
                 {
                     System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -375,10 +391,44 @@ public partial class MainViewModel : ObservableObject
                     // ignore
                 }
             }
+
+            // Audio atbilde — Windows SAPI (ja backend jau nerunāja)
+            if (!string.IsNullOrWhiteSpace(result.SpeakText))
+            {
+                SpeakLocal(result.SpeakText);
+            }
         }
         catch
         {
             // UI darbība nedrīkst nogāzt chatu
+        }
+    }
+
+    private static void SpeakLocal(string text)
+    {
+        try
+        {
+            var safe = text.Replace("'", "''");
+            if (safe.Length > 600)
+            {
+                safe = safe[..600];
+            }
+
+            var ps =
+                "Add-Type -AssemblyName System.Speech; " +
+                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; " +
+                $"$s.Speak('{safe}')";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "powershell",
+                Arguments = "-NoProfile -WindowStyle Hidden -Command " + ps,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+        }
+        catch
+        {
+            // TTS nav obligāts
         }
     }
 

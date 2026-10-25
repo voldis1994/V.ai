@@ -123,6 +123,8 @@ public sealed class ChatResponseDto
     public string? OpenUrl { get; set; }
     public string? OpenPath { get; set; }
     public string? Focus { get; set; }
+    public string? SpeakText { get; set; }
+    public string? ImagePath { get; set; }
 }
 
 public sealed class HealthResponseDto
