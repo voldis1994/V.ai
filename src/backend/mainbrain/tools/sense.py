@@ -260,14 +260,21 @@ def _speak_edge_tts(text: str, *, voice: str = DEFAULT_LV_VOICE) -> dict[str, An
     last_exc: Exception | None = None
     path: Path | None = None
     used_voice = voice
-    for v in voices:
-        try:
-            path = _synth(v)
-            used_voice = v
+    # 2 balsis × 2 mēģinājumi — Edge TTS dažreiz īslaicīgi neatdod audio
+    for attempt in range(2):
+        for v in voices:
+            try:
+                path = _synth(v)
+                used_voice = v
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                continue
+        if path is not None:
             break
-        except Exception as exc:  # noqa: BLE001
-            last_exc = exc
-            continue
+        import time
+
+        time.sleep(0.4 * (attempt + 1))
     if path is None:
         return {
             "ok": False,
