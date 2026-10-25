@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.IO;
 using System.Text.Json;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -347,7 +349,7 @@ public partial class MainViewModel : ObservableObject
                 BrowserUrl = result.OpenUrl;
                 try
                 {
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    Process.Start(new ProcessStartInfo
                     {
                         FileName = result.OpenUrl,
                         UseShellExecute = true,
@@ -359,28 +361,28 @@ public partial class MainViewModel : ObservableObject
                 }
             }
 
-            if (!string.IsNullOrWhiteSpace(result.ImagePath) && File.Exists(result.ImagePath))
+            if (!string.IsNullOrWhiteSpace(result.ImagePath) && System.IO.File.Exists(result.ImagePath))
             {
                 LiveImagePath = result.ImagePath;
                 FocusSource = "live";
             }
 
-            if (!string.IsNullOrWhiteSpace(result.OpenPath) && File.Exists(result.OpenPath))
+            if (!string.IsNullOrWhiteSpace(result.OpenPath) && System.IO.File.Exists(result.OpenPath))
             {
-                var ext = Path.GetExtension(result.OpenPath).ToLowerInvariant();
-                if (ext is ".png" or ".jpg" or ".jpeg" or ".bmp" or ".webp")
+                var ext = System.IO.Path.GetExtension(result.OpenPath).ToLowerInvariant();
+                if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".webp")
                 {
                     LiveImagePath = result.OpenPath;
                     FocusSource = "live";
                 }
                 else
                 {
-                    EditorText = File.ReadAllText(result.OpenPath);
+                    EditorText = System.IO.File.ReadAllText(result.OpenPath);
                 }
 
                 try
                 {
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    Process.Start(new ProcessStartInfo
                     {
                         FileName = result.OpenPath,
                         UseShellExecute = true,
@@ -418,10 +420,10 @@ public partial class MainViewModel : ObservableObject
                 "Add-Type -AssemblyName System.Speech; " +
                 "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; " +
                 $"$s.Speak('{safe}')";
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            Process.Start(new ProcessStartInfo
             {
                 FileName = "powershell",
-                Arguments = "-NoProfile -WindowStyle Hidden -Command " + ps,
+                Arguments = "-NoProfile -WindowStyle Hidden -Command \"" + ps.Replace("\"", "\\\"") + "\"",
                 UseShellExecute = false,
                 CreateNoWindow = true,
             });

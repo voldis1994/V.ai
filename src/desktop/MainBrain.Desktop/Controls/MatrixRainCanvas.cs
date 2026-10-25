@@ -12,7 +12,7 @@ namespace MainBrain.Desktop.Controls;
 public sealed class MatrixRainCanvas : FrameworkElement
 {
     private readonly DispatcherTimer _timer;
-    private readonly List<Drop> _drops = new();
+    private readonly List<RainDrop> _drops = new();
     private readonly List<Floater> _floaters = new();
     private readonly Random _rng = new();
     private readonly Typeface _typeface = new("Consolas");
@@ -86,7 +86,7 @@ public sealed class MatrixRainCanvas : FrameworkElement
 
         // Pārbūvē lokāli, tad atomiski aizvieto — bez Clear() Tick/OnRender laikā
         var cols = Math.Max(24, (int)(_size.Width / 14));
-        var drops = new List<Drop>(cols);
+        var drops = new List<RainDrop>(cols);
         for (var i = 0; i < cols; i++)
         {
             drops.Add(NewDrop(i * 14 + _rng.NextDouble() * 4, spawnTop: true));
@@ -105,7 +105,7 @@ public sealed class MatrixRainCanvas : FrameworkElement
         _initialized = true;
     }
 
-    private Drop NewDrop(double x, bool spawnTop)
+    private RainDrop NewDrop(double x, bool spawnTop)
     {
         var len = _rng.Next(8, 22);
         var chars = new char[len];
@@ -114,7 +114,7 @@ public sealed class MatrixRainCanvas : FrameworkElement
             chars[i] = Glyphs[_rng.Next(Glyphs.Length)];
         }
 
-        return new Drop
+        return new RainDrop
         {
             X = x,
             Y = spawnTop ? -_rng.Next(0, (int)_size.Height) : -_rng.Next(40, 400),
@@ -140,7 +140,7 @@ public sealed class MatrixRainCanvas : FrameworkElement
         };
     }
 
-    private void ResetDrop(Drop d, double x)
+    private void ResetDrop(RainDrop d, double x)
     {
         var len = _rng.Next(8, 22);
         if (d.Chars.Length != len)
@@ -267,7 +267,7 @@ public sealed class MatrixRainCanvas : FrameworkElement
         }
     }
 
-    private sealed class Drop
+    private sealed class RainDrop
     {
         public double X;
         public double Y;

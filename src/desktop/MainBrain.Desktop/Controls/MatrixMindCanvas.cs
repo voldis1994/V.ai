@@ -29,7 +29,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
         new PropertyMetadata(""));
 
     private readonly DispatcherTimer _timer;
-    private readonly List<Drop> _drops = new();
+    private readonly List<RainDrop> _drops = new();
     private readonly List<Floater> _floaters = new();
     private readonly List<GlyphParticle> _particles = new();
     private readonly Random _rng = new();
@@ -255,7 +255,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
         }
 
         var cols = Math.Max(28, (int)(_size.Width / 16));
-        var drops = new List<Drop>(cols);
+        var drops = new List<RainDrop>(cols);
         for (var i = 0; i < cols; i++)
         {
             drops.Add(NewDrop(i * 16 + _rng.NextDouble() * 4, spawnTop: true));
@@ -274,7 +274,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
         _initialized = true;
     }
 
-    private Drop NewDrop(double x, bool spawnTop)
+    private RainDrop NewDrop(double x, bool spawnTop)
     {
         var len = _rng.Next(10, 26);
         var chars = new char[len];
@@ -283,7 +283,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
             chars[i] = Glyphs[_rng.Next(Glyphs.Length)];
         }
 
-        return new Drop
+        return new RainDrop
         {
             X = x,
             Y = spawnTop ? -_rng.Next(0, (int)_size.Height) : -_rng.Next(40, 400),
@@ -309,7 +309,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
         };
     }
 
-    private void ResetDrop(Drop d)
+    private void ResetDrop(RainDrop d)
     {
         var len = _rng.Next(10, 26);
         if (d.Chars.Length != len)
@@ -598,7 +598,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
         }
     }
 
-    private sealed class Drop
+    private sealed class RainDrop
     {
         public double X;
         public double Y;
