@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -13,6 +14,12 @@ namespace MainBrain.Desktop.ViewModels;
 public partial class MainViewModel : ObservableObject
 {
     private readonly ApiClient _api;
+
+    /// <summary>MainWindow: noņem Topmost + minimizē, lai pārlūks/fails BŪTU REDZAMS.</summary>
+    public Action<string>? YieldForExternalAction { get; set; }
+
+    /// <summary>MainWindow: atgriež Matrix overlay pēc darbības.</summary>
+    public Action? RestoreMainOverlay { get; set; }
 
     [ObservableProperty] private string _title = "Main Brain OS";
     [ObservableProperty] private string _statusText = "Inicializē...";
@@ -282,9 +289,6 @@ public partial class MainViewModel : ObservableObject
         ActiveJobs++;
         IsThinking = true;
         ShowMatrixRain = true;
-        // Iepriekšējā atbilde izgaist — hieroglifi atkal lido brīvi, tad salido jaunajā
-        FormedAnswer = "";
-        MatrixStatus = "◈ DOMĀ …";
         if (string.IsNullOrWhiteSpace(ChatOutput))
         {
             ChatOutput = $"Tu: {userText}";
@@ -294,11 +298,13 @@ public partial class MainViewModel : ObservableObject
             ChatOutput += $"\n\nTu: {userText}";
         }
 
-        // Immersīvā vienmēr paliekam uz Matrix; chrome režīmā — home, ja nav pin
         if (ImmersiveMode || !FocusPinned)
         {
             FocusSource = "home";
         }
+
+        // UZREIZ rādam darbību + atveram logu — NEgaidām backend «DOMĀ»
+        var preview = BeginVisibleAction(userText);
 
         try
         {
@@ -310,38 +316,45 @@ public partial class MainViewModel : ObservableObject
             });
             var reply = result.Reply ?? "";
             ChatOutput += $"\nMain Brain: {reply}";
-            // Hieroglifi salido un izveido atbildi ekrāna centrā — VIENS ekrāns
             FormedAnswer = reply;
-            MatrixStatus = ImmersiveMode ? "" : "◈ ATBILDE";
+            MatrixStatus = preview.OpenedExternal ? "◈ SKATIES PĀRLŪKU / LOGU · Esc = atpakaļ" : "";
             if (result.Mode is "execute" or "act")
             {
                 TerminalOutput += $"\n[{DateTime.Now:HH:mm:ss}] {result.Mode}: {result.GoalStatus ?? result.UiAction}";
                 InspectorText = $"Darbība: {result.UiAction ?? result.GoalStatus}";
             }
 
-            // Fiziski: pārlūks/fails/kamera — Matrix paliek, chrome paneļi NETiek atvērti immersīvā
-            ApplyUiAction(result);
+            ApplyUiAction(result, alreadyOpenedUrl: preview.OpenedUrl);
             OnPropertyChanged(nameof(ApprovalsVisibility));
+
+            // Ja atvērām ārēju logu — īsi ļaujam to redzēt, tad atgriežam Matrix ar atbildi
+            if (preview.OpenedExternal)
+            {
+                await Task.Delay(1200);
+                RestoreMainOverlay?.Invoke();
+            }
         }
         catch (TaskCanceledException)
         {
             var err =
-                "Modelis neatbildēja laikā. Lokālā AI uz CPU ir lēna — " +
-                "aizver citas programmas un mēģini īsāku jautājumu.";
+                "Ilgi nav atbildes. Ja pārlūks jau atvērās — skaties to. "
+                + "Esc atgriež Matrix.";
             ChatOutput += "\nMain Brain: " + err;
             FormedAnswer = err;
             MatrixStatus = "◈ LĒNI";
+            RestoreMainOverlay?.Invoke();
         }
         catch (Exception ex)
         {
             var msg = ex.Message ?? "";
             var err = msg.Contains("Timeout", StringComparison.OrdinalIgnoreCase) ||
                       msg.Contains("canceled", StringComparison.OrdinalIgnoreCase)
-                ? "Modelis neatbildēja laikā. Aizver citas programmas un mēģini vēlreiz."
+                ? "Ilgi nav atbildes. Esc atgriež Matrix — pārbaudi, vai pārlūks atvērās."
                 : "Kļūda — " + msg;
             ChatOutput += "\nMain Brain: " + err;
             FormedAnswer = err;
             MatrixStatus = "◈ KĻŪDA";
+            RestoreMainOverlay?.Invoke();
         }
         finally
         {
@@ -351,12 +364,87 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private void ApplyUiAction(ChatResponseDto result)
+    private sealed record ActionPreview(bool OpenedExternal, string? OpenedUrl);
+
+    /// <summary>
+    /// Uzreiz: statuss + pārlūks/fails REDZAMS (Topmost nost). Citādi lietotājs redz tikai «DOMĀ».
+    /// </summary>
+    private ActionPreview BeginVisibleAction(string userText)
+    {
+        var t = userText.Trim();
+        var search = Regex.IsMatch(
+            t,
+            @"(?i)\b(sameklē|meklē|atrast|search|google|kas\s+ir|who\s+is|pastāsti\s+par|info\s+par|informācij)",
+            RegexOptions.IgnoreCase);
+        // Divi Title-Case vārdi ≈ persona → meklēšana
+        var personName = Regex.IsMatch(t, @"^\s*[A-ZĀČĒĢĪĶĻŅŠŪŽ][\wāčēģīķļņšūž]+\s+[A-ZĀČĒĢĪĶĻŅŠŪŽ][\wāčēģīķļņšūž]+\s*$");
+        var looksQuestion = t.Contains('?') || Regex.IsMatch(t, @"(?i)^\s*(kas|kā|kur|kad|kāpēc|who|what|where|when|why|how)\b");
+        var openApp = Regex.IsMatch(t, @"(?i)\b(atver|open|palaid)\b");
+        var build = Regex.IsMatch(t, @"(?i)\b(uztaisi|izveido|uzraksti|uzprogrammē|build|create)\b");
+        if (personName)
+        {
+            search = true;
+        }
+
+        if (build)
+        {
+            MatrixStatus = "◈ TAISU …";
+            FormedAnswer = "Taisu uzdevumu — pēc tam atvēršu rezultātu logā.";
+            return new ActionPreview(false, null);
+        }
+
+        if (openApp && !search)
+        {
+            MatrixStatus = "◈ ATVERU PROGRAMMU …";
+            FormedAnswer = "Atveru programmu — logam jābūt redzamam (Main Brain īslaicīgi noņem overlay).";
+            YieldForExternalAction?.Invoke("open");
+            return new ActionPreview(true, null);
+        }
+
+        if (search || looksQuestion)
+        {
+            var q = ExtractSearchQuery(t);
+            var url = "https://duckduckgo.com/?q=" + Uri.EscapeDataString(q);
+            MatrixStatus = "◈ ATVERU PĀRLŪKU …";
+            FormedAnswer =
+                $"Atveru interneta pārlūku un meklēju:\n«{q}»\n\n" +
+                "Skaties pārlūka logu — tur es ieeju. Esc = atpakaļ uz Matrix.";
+            YieldForExternalAction?.Invoke("browser");
+            try
+            {
+                Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+            }
+            catch
+            {
+                // backend vēl mēģinās
+            }
+
+            BrowserUrl = url;
+            return new ActionPreview(true, url);
+        }
+
+        MatrixStatus = "◈ DARU …";
+        FormedAnswer = "Strādāju…";
+        return new ActionPreview(false, null);
+    }
+
+    private static string ExtractSearchQuery(string text)
+    {
+        var m = Regex.Match(
+            text,
+            @"(?i)(?:sameklē|meklē|atrast|search|google|pastāsti\s+par|info\s+par|informācij[ua]\s+par|kas\s+ir|who\s+is)\s+(.+)$");
+        if (m.Success)
+        {
+            return m.Groups[1].Value.Trim().TrimEnd('?', '.', '!');
+        }
+
+        return text.Trim().TrimEnd('?', '.', '!');
+    }
+
+    private void ApplyUiAction(ChatResponseDto result, string? alreadyOpenedUrl = null)
     {
         try
         {
-            // Immersīvais = VIENS galvenais ekrāns. Fiziskās darbības (pārlūks/fails/kamera)
-            // notiek ārā vai Matrix atbildē — UI NEPĀRSLĒDZAS uz chrome paneļiem.
             var stayOnMatrix = ImmersiveMode;
 
             if (!stayOnMatrix && !string.IsNullOrWhiteSpace(result.Focus))
@@ -371,17 +459,23 @@ public partial class MainViewModel : ObservableObject
             if (!string.IsNullOrWhiteSpace(result.OpenUrl))
             {
                 BrowserUrl = result.OpenUrl;
-                try
+                var same = !string.IsNullOrWhiteSpace(alreadyOpenedUrl) &&
+                           string.Equals(alreadyOpenedUrl, result.OpenUrl, StringComparison.OrdinalIgnoreCase);
+                if (!same)
                 {
-                    Process.Start(new ProcessStartInfo
+                    YieldForExternalAction?.Invoke("browser");
+                    try
                     {
-                        FileName = result.OpenUrl,
-                        UseShellExecute = true,
-                    });
-                }
-                catch
-                {
-                    // backend jau var būt atvēris sistēmas pārlūku
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = result.OpenUrl,
+                            UseShellExecute = true,
+                        });
+                    }
+                    catch
+                    {
+                        // backend jau var būt atvēris
+                    }
                 }
             }
 
@@ -414,7 +508,7 @@ public partial class MainViewModel : ObservableObject
                     }
                 }
 
-                // Immersīvā: atver failu/attēlu ārēji, Matrix paliek
+                YieldForExternalAction?.Invoke("file");
                 try
                 {
                     Process.Start(new ProcessStartInfo

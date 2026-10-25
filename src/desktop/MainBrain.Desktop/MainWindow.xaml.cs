@@ -25,6 +25,7 @@ public partial class MainWindow : Window
         ResizeMode = ResizeMode.NoResize;
         Topmost = true;
         WindowState = WindowState.Maximized;
+        ShowInTaskbar = true;
     }
 
     private void ExitFullscreen()
@@ -34,6 +35,48 @@ public partial class MainWindow : Window
         WindowStyle = WindowStyle.SingleBorderWindow;
         ResizeMode = ResizeMode.CanResize;
         WindowState = WindowState.Maximized;
+    }
+
+    /// <summary>
+    /// Kritiski: Topmost=true pārklāj pārlūku — lietotājs redz tikai «DOMĀ».
+    /// Minimizējam overlay, lai Chrome/Edge/fails būtu REDZAMS priekšā.
+    /// </summary>
+    private void YieldForExternalAction(string reason)
+    {
+        try
+        {
+            Topmost = false;
+            WindowState = WindowState.Minimized;
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private void RestoreMainOverlay()
+    {
+        try
+        {
+            if (_trueFullscreen)
+            {
+                WindowStyle = WindowStyle.None;
+                ResizeMode = ResizeMode.NoResize;
+                Topmost = true;
+            }
+
+            if (WindowState == WindowState.Minimized)
+            {
+                WindowState = WindowState.Maximized;
+            }
+
+            Activate();
+            ChatBox?.Focus();
+        }
+        catch
+        {
+            // ignore
+        }
     }
 
     private void Window_OnKeyDown(object sender, KeyEventArgs e)
@@ -50,17 +93,16 @@ public partial class MainWindow : Window
 
         if (e.Key == Key.Escape)
         {
-            // Esc immersīvā: fokuss uz jautājumu; Chrome režīmā — atpakaļ immersīvā
+            // Esc: atgriež Matrix overlay (pēc pārlūka) + fokuss
+            RestoreMainOverlay();
             if (DataContext is MainViewModel vm)
             {
                 if (!vm.ImmersiveMode)
                 {
                     vm.ImmersiveMode = true;
                 }
-                else
-                {
-                    ChatBox?.Focus();
-                }
+
+                ChatBox?.Focus();
             }
 
             e.Handled = true;
@@ -119,7 +161,11 @@ public partial class MainWindow : Window
             }
 
             var api = new ApiClient(host.BaseUrl, host.Token);
-            var vm = new MainViewModel(api);
+            var vm = new MainViewModel(api)
+            {
+                YieldForExternalAction = YieldForExternalAction,
+                RestoreMainOverlay = RestoreMainOverlay,
+            };
             DataContext = vm;
             await vm.InitializeAsync();
             ChatBox?.Focus();

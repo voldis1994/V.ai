@@ -37,7 +37,7 @@
                      CaretBrush="#FFFF2ECB" Padding="0,8"
                      KeyDown="ChatBox_OnKeyDown"/>
           </DockPanel>
-          <TextBlock Text="Enter · jautā   ·   Ctrl+Shift+D · sistēma   ·   Esc · Matrix   ·   F11 · logs"
+          <TextBlock Text="Enter · jautā   ·   Esc · atpakaļ no pārlūka   ·   Ctrl+Shift+D · sistēma   ·   F11 · logs"
                      FontFamily="Consolas" FontSize="11" Foreground="#44FF2ECB"
                      HorizontalAlignment="Center" Margin="0,6,0,0"/>
         </StackPanel>
