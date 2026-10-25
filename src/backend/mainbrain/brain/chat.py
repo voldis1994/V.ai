@@ -173,7 +173,7 @@ class ChatService:
         if intent not in {Intent.LEARN, Intent.BUILD, Intent.SEARCH, Intent.PERSON, Intent.EXPLAIN}:
             meta = self._meta_about_self(user_msg)
             if meta:
-                return self._finish(session, history, meta, speak_text=meta, user_msg=user_msg)
+                return self._finish(session, history, meta, user_msg=user_msg)
 
         # Valodu īsie FAQ — tikai skaidri jautājumi par valodām (ne «izrunā valodu»)
         if re.search(r"(?i)\b(kād[aā]s?\s+valod|which\s+language|scottish|scotland|skotij)", user_msg):
@@ -187,7 +187,7 @@ class ChatService:
                     "Es saprotu un atbildu latviešu un angļu valodā. "
                     "Citas valodas — vāji (lokālais modelis)."
                 )
-            return self._finish(session, history, reply, speak_text=reply, user_msg=user_msg)
+            return self._finish(session, history, reply, user_msg=user_msg)
 
         topic = extract_topic(user_msg)
 
@@ -197,7 +197,7 @@ class ChatService:
                 "Labi — ko tieši iegaumēt? Piemēram: «iemācies kas ir Python» "
                 "vai «iemācies Edgars Gaidulis». Es sameklēšu, saglabāšu failā un atmiņā."
             )
-            return self._finish(session, history, ask, speak_text=ask, user_msg=user_msg)
+            return self._finish(session, history, ask, user_msg=user_msg)
 
         # BRĪVAIS REŽĪMS: jautājumi / personas / meklēšana / skaidrojumi / iemācies
         # → pārlūks + fakti + SAGLABĀ fails. NEgaidām Ollama.
@@ -267,14 +267,12 @@ class ChatService:
         history[:] = cleaned[-10:]
         history.append({"role": "assistant", "content": reply})
 
-        # Voice: NEbloķējam /chat ar SAPI. Desktop SpeakLocal(speak_text) pēc PiP aizvēršanas.
-        speak = speak_text
-        probe = (user_msg or "").lower()
-        if speak is None and re.search(r"(?i)\b(pasaki|runā|speak|audio|skaļi|izrunā|balsī)\b", probe):
-            speak = reply
-        # Meklēšana / kamera / act — vienmēr atdodam runājamo tekstu (Desktop balsīs)
-        if speak is None and mode in {"act", "execute"} and reply:
-            speak = reply.split("\n\n[Darbība]")[0].split("\n\n[Iemācīts]")[0].strip()
+        # Audio TIKAI ja lietotājs to prasa («pasaki», «skaļi» …) — ne pēc katras darbības
+        speak: str | None = None
+        if self._wants_voice(user_msg or ""):
+            speak = (speak_text or reply).split("\n\n[Darbība]")[0].split("\n\n[Iemācīts]")[0].strip()
+            if len(speak) > 800:
+                speak = speak[:800] + "…"
 
         return ChatResponse(
             reply=reply,
@@ -288,6 +286,15 @@ class ChatService:
             focus=focus,
             speak_text=speak,
             image_path=image_path,
+        )
+
+    @staticmethod
+    def _wants_voice(text: str) -> bool:
+        return bool(
+            re.search(
+                r"(?i)\b(pasaki|pasaki\s+skaļi|runā|runāt|speak|audio|skaļi|izrunā|balsī|voice)\b",
+                text or "",
+            )
         )
 
     async def _camera_sense(

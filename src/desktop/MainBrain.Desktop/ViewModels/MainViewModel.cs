@@ -325,7 +325,7 @@ public partial class MainViewModel : ObservableObject
                 WorkspacePath = string.IsNullOrWhiteSpace(WorkspacePath) ? null : WorkspacePath,
             });
             var reply = result.Reply ?? "";
-            var spoken = HumanizeReply(!string.IsNullOrWhiteSpace(result.SpeakText) ? result.SpeakText! : reply);
+            var display = HumanizeReply(reply);
             ChatOutput += $"\nMain Brain: {reply}";
             if (result.Mode is "execute" or "act")
             {
@@ -335,7 +335,7 @@ public partial class MainViewModel : ObservableObject
 
             ApplyUiAction(result, alreadyOpenedUrl: preview.OpenedUrl);
 
-            // Kad uzdevums gatavs: īss brīdis paskatīties → AIZVER mazo lodziņu → atbild saviem vārdiem + VOICE
+            // Kad uzdevums gatavs: īss brīdis paskatīties → AIZVER mazo lodziņu → teksta atbilde
             if (preview.ShowPip)
             {
                 await Task.Delay(1600);
@@ -343,7 +343,7 @@ public partial class MainViewModel : ObservableObject
 
             ShowImmersiveActivity = false;
             MatrixStatus = "";
-            FormedAnswer = string.IsNullOrWhiteSpace(spoken) ? reply : spoken;
+            FormedAnswer = string.IsNullOrWhiteSpace(display) ? reply : display;
 
             // Ja saglabāts/atvērts fails vai programma — rādi Windows logu (nevis Topmost overlay)
             if (!string.IsNullOrWhiteSpace(result.OpenPath) ||
@@ -352,9 +352,10 @@ public partial class MainViewModel : ObservableObject
                 YieldForExternalAction?.Invoke(result.UiAction ?? "file");
             }
 
-            if (!string.IsNullOrWhiteSpace(spoken))
+            // Audio TIKAI ja backend atdeva SpeakText (= lietotājs teica pasaki/skaļi/…)
+            if (!string.IsNullOrWhiteSpace(result.SpeakText))
             {
-                SpeakLocal(spoken);
+                SpeakLocal(HumanizeReply(result.SpeakText!));
             }
 
             OnPropertyChanged(nameof(ApprovalsVisibility));
@@ -366,7 +367,6 @@ public partial class MainViewModel : ObservableObject
             ChatOutput += "\nMain Brain: " + err;
             FormedAnswer = err;
             MatrixStatus = "◈ LĒNI";
-            SpeakLocal(err);
         }
         catch (Exception ex)
         {
@@ -379,7 +379,6 @@ public partial class MainViewModel : ObservableObject
             ChatOutput += "\nMain Brain: " + err;
             FormedAnswer = err;
             MatrixStatus = "◈ KĻŪDA";
-            SpeakLocal(err);
         }
         finally
         {
@@ -401,7 +400,6 @@ public partial class MainViewModel : ObservableObject
             t,
             @"(?i)\b(kamer|camera|webcam|seja|face|ko\s+tu\s+redzi|redzi\s+mani|atpazī\w*\s+sej)",
             RegexOptions.IgnoreCase);
-        var wantsVoice = Regex.IsMatch(t, @"(?i)\b(pasaki|runā|speak|audio|skaļi|izrunā|balsī)\b");
         var search = Regex.IsMatch(
             t,
             @"(?i)\b(sameklē|meklē|atrast|search|google|kas\s+ir|who\s+is|pastāsti\s+par|info\s+par|informācij)",
@@ -453,9 +451,7 @@ public partial class MainViewModel : ObservableObject
             MatrixStatus = "◈ MEKLĒJU …";
             ActivityTitle = "◈ KO ES DARU · meklēšana (labajā)";
             FormedAnswer =
-                wantsVoice
-                    ? $"Meklēju «{q}». Pēc tam pateikšu balsī, ko atrada."
-                    : $"Meklēju «{q}».\n\nLabajā pusē — mazais logs (ko es daru). Pēc tam to aizvēršu un pastāstīšu, ko atrada.";
+                $"Meklēju «{q}».\n\nLabajā pusē — mazais logs (ko es daru). Pēc tam to aizvēršu un uzrakstīšu, ko atrada.";
             ShowImmersiveActivity = true;
             BrowserUrl = url;
             return new ActionPreview(true, url);
