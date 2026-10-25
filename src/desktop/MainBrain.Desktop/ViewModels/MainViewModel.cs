@@ -47,6 +47,13 @@ public partial class MainViewModel : ObservableObject
     /// <summary>Kameras/attēla priekšskatījums uz paša Matrix ekrāna (bez paneļu maiņas).</summary>
     public Visibility ImmersiveLiveVisibility =>
         ImmersiveMode && !string.IsNullOrWhiteSpace(LiveImagePath) ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>Mazais «ko es daru» pārlūka lodziņš uz Matrix.</summary>
+    [ObservableProperty] private bool _showImmersiveActivity;
+    [ObservableProperty] private string _activityTitle = "◈ KO ES DARU";
+
+    public Visibility ImmersiveActivityVisibility =>
+        ImmersiveMode && ShowImmersiveActivity ? Visibility.Visible : Visibility.Collapsed;
     [ObservableProperty] private string _terminalOutput = "";
     [ObservableProperty] private AgentDefinitionDto? _selectedAgent;
     [ObservableProperty] private string _inspectorText = "Izvēlieties aģentu vai palaidiet uzdevumu.";
@@ -174,6 +181,7 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(ImmersiveVisibility));
         OnPropertyChanged(nameof(ChromeVisibility));
         OnPropertyChanged(nameof(ImmersiveLiveVisibility));
+        OnPropertyChanged(nameof(ImmersiveActivityVisibility));
         if (value)
         {
             FocusSource = "home";
@@ -189,6 +197,7 @@ public partial class MainViewModel : ObservableObject
     }
 
     partial void OnLiveImagePathChanged(string? value) => OnPropertyChanged(nameof(ImmersiveLiveVisibility));
+    partial void OnShowImmersiveActivityChanged(bool value) => OnPropertyChanged(nameof(ImmersiveActivityVisibility));
 
     private void NotifyWorkspaceVisibilities()
     {
@@ -317,7 +326,7 @@ public partial class MainViewModel : ObservableObject
             var reply = result.Reply ?? "";
             ChatOutput += $"\nMain Brain: {reply}";
             FormedAnswer = reply;
-            MatrixStatus = preview.OpenedExternal ? "◈ SKATIES PĀRLŪKU / LOGU · Esc = atpakaļ" : "";
+            MatrixStatus = preview.ShowPip ? "◈ SKATIES MAZO LODZIŅU (labajā pusē)" : "";
             if (result.Mode is "execute" or "act")
             {
                 TerminalOutput += $"\n[{DateTime.Now:HH:mm:ss}] {result.Mode}: {result.GoalStatus ?? result.UiAction}";
@@ -326,35 +335,24 @@ public partial class MainViewModel : ObservableObject
 
             ApplyUiAction(result, alreadyOpenedUrl: preview.OpenedUrl);
             OnPropertyChanged(nameof(ApprovalsVisibility));
-
-            // Ja atvērām ārēju logu — īsi ļaujam to redzēt, tad atgriežam Matrix ar atbildi
-            if (preview.OpenedExternal)
-            {
-                await Task.Delay(1200);
-                RestoreMainOverlay?.Invoke();
-            }
         }
         catch (TaskCanceledException)
         {
-            var err =
-                "Ilgi nav atbildes. Ja pārlūks jau atvērās — skaties to. "
-                + "Esc atgriež Matrix.";
+            var err = "Ilgi nav atbildes — skaties mazo pārlūka lodziņu labajā pusē.";
             ChatOutput += "\nMain Brain: " + err;
             FormedAnswer = err;
             MatrixStatus = "◈ LĒNI";
-            RestoreMainOverlay?.Invoke();
         }
         catch (Exception ex)
         {
             var msg = ex.Message ?? "";
             var err = msg.Contains("Timeout", StringComparison.OrdinalIgnoreCase) ||
                       msg.Contains("canceled", StringComparison.OrdinalIgnoreCase)
-                ? "Ilgi nav atbildes. Esc atgriež Matrix — pārbaudi, vai pārlūks atvērās."
+                ? "Ilgi nav atbildes — skaties mazo lodziņu labajā pusē."
                 : "Kļūda — " + msg;
             ChatOutput += "\nMain Brain: " + err;
             FormedAnswer = err;
             MatrixStatus = "◈ KĻŪDA";
-            RestoreMainOverlay?.Invoke();
         }
         finally
         {
@@ -364,10 +362,10 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private sealed record ActionPreview(bool OpenedExternal, string? OpenedUrl);
+    private sealed record ActionPreview(bool ShowPip, string? OpenedUrl);
 
     /// <summary>
-    /// Uzreiz: statuss + pārlūks/fails REDZAMS (Topmost nost). Citādi lietotājs redz tikai «DOMĀ».
+    /// Uzreiz: mazais pārlūka lodziņš UZ TĀ PAŠA Matrix ekrāna — redzi, ko AI dara.
     /// </summary>
     private ActionPreview BeginVisibleAction(string userText)
     {
@@ -376,7 +374,6 @@ public partial class MainViewModel : ObservableObject
             t,
             @"(?i)\b(sameklē|meklē|atrast|search|google|kas\s+ir|who\s+is|pastāsti\s+par|info\s+par|informācij)",
             RegexOptions.IgnoreCase);
-        // Divi Title-Case vārdi ≈ persona → meklēšana
         var personName = Regex.IsMatch(t, @"^\s*[A-ZĀČĒĢĪĶĻŅŠŪŽ][\wāčēģīķļņšūž]+\s+[A-ZĀČĒĢĪĶĻŅŠŪŽ][\wāčēģīķļņšūž]+\s*$");
         var looksQuestion = t.Contains('?') || Regex.IsMatch(t, @"(?i)^\s*(kas|kā|kur|kad|kāpēc|who|what|where|when|why|how)\b");
         var openApp = Regex.IsMatch(t, @"(?i)\b(atver|open|palaid)\b");
@@ -389,36 +386,32 @@ public partial class MainViewModel : ObservableObject
         if (build)
         {
             MatrixStatus = "◈ TAISU …";
-            FormedAnswer = "Taisu uzdevumu — pēc tam atvēršu rezultātu logā.";
+            ActivityTitle = "◈ KO ES DARU · taisīšana";
+            FormedAnswer = "Taisu uzdevumu. Rezultātu redzēsi šeit un, ja vajag, atvēršu failu.";
+            ShowImmersiveActivity = false;
             return new ActionPreview(false, null);
         }
 
         if (openApp && !search)
         {
-            MatrixStatus = "◈ ATVERU PROGRAMMU …";
-            FormedAnswer = "Atveru programmu — logam jābūt redzamam (Main Brain īslaicīgi noņem overlay).";
+            MatrixStatus = "◈ ATVERU …";
+            ActivityTitle = "◈ KO ES DARU · programma";
+            FormedAnswer = "Atveru programmu. Mazajā lodziņā / Windows logā redzēsi darbību.";
+            // Programmas (notepad) — īss yield, lai Windows logs būtu priekšā
             YieldForExternalAction?.Invoke("open");
-            return new ActionPreview(true, null);
+            return new ActionPreview(false, null);
         }
 
         if (search || looksQuestion)
         {
             var q = ExtractSearchQuery(t);
             var url = "https://duckduckgo.com/?q=" + Uri.EscapeDataString(q);
-            MatrixStatus = "◈ ATVERU PĀRLŪKU …";
+            MatrixStatus = "◈ MEKLĒJU …";
+            ActivityTitle = "◈ KO ES DARU · meklēšana";
             FormedAnswer =
-                $"Atveru interneta pārlūku un meklēju:\n«{q}»\n\n" +
-                "Skaties pārlūka logu — tur es ieeju. Esc = atpakaļ uz Matrix.";
-            YieldForExternalAction?.Invoke("browser");
-            try
-            {
-                Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
-            }
-            catch
-            {
-                // backend vēl mēģinās
-            }
-
+                $"Meklēju «{q}».\n\nSkaties MAZO LODZIŅU labajā pusē — tur es ieeju internetā.";
+            // PiP uz tā paša ekrāna — NEminimizējam Matrix
+            ShowImmersiveActivity = true;
             BrowserUrl = url;
             return new ActionPreview(true, url);
         }
@@ -458,25 +451,10 @@ public partial class MainViewModel : ObservableObject
 
             if (!string.IsNullOrWhiteSpace(result.OpenUrl))
             {
+                // Rādam tajā pašā Matrix ekrānā mazajā WebView lodziņā
+                ShowImmersiveActivity = true;
+                ActivityTitle = "◈ KO ES DARU · meklēšana";
                 BrowserUrl = result.OpenUrl;
-                var same = !string.IsNullOrWhiteSpace(alreadyOpenedUrl) &&
-                           string.Equals(alreadyOpenedUrl, result.OpenUrl, StringComparison.OrdinalIgnoreCase);
-                if (!same)
-                {
-                    YieldForExternalAction?.Invoke("browser");
-                    try
-                    {
-                        Process.Start(new ProcessStartInfo
-                        {
-                            FileName = result.OpenUrl,
-                            UseShellExecute = true,
-                        });
-                    }
-                    catch
-                    {
-                        // backend jau var būt atvēris
-                    }
-                }
             }
 
             if (!string.IsNullOrWhiteSpace(result.ImagePath) && System.IO.File.Exists(result.ImagePath))

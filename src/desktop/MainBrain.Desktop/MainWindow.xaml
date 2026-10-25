@@ -37,14 +37,36 @@
                      CaretBrush="#FFFF2ECB" Padding="0,8"
                      KeyDown="ChatBox_OnKeyDown"/>
           </DockPanel>
-          <TextBlock Text="Enter · jautā   ·   Esc · atpakaļ no pārlūka   ·   Ctrl+Shift+D · sistēma   ·   F11 · logs"
+          <TextBlock Text="Enter · jautā   ·   labajā: mazais logs ko AI dara   ·   Ctrl+Shift+D · sistēma   ·   F11"
                      FontFamily="Consolas" FontSize="11" Foreground="#44FF2ECB"
                      HorizontalAlignment="Center" Margin="0,6,0,0"/>
         </StackPanel>
       </Border>
-      <!-- Kamera/attēls uz TĀ PAŠA Matrix ekrāna (nevis atsevišķs panelis) -->
+      <!-- Dzīvais lodziņš: ko AI DARA (pārlūks) — uz TĀ PAŠA Matrix ekrāna -->
+      <Border HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,24,80"
+              Width="520" Height="360" CornerRadius="8"
+              BorderBrush="#AAFF2ECB" BorderThickness="2" Background="#EE08020A"
+              Visibility="{Binding ImmersiveActivityVisibility}">
+        <Border.Effect>
+          <DropShadowEffect Color="#FF2ECB" BlurRadius="24" ShadowDepth="0" Opacity="0.55"/>
+        </Border.Effect>
+        <DockPanel>
+          <Border DockPanel.Dock="Top" Background="#3308020A" Padding="12,8" BorderBrush="#44FF2ECB" BorderThickness="0,0,0,1">
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Left" Text="{Binding ActivityTitle}"
+                         FontFamily="Consolas" FontSize="13" FontWeight="Bold"
+                         Foreground="#FFFF2ECB" VerticalAlignment="Center"/>
+              <TextBlock DockPanel.Dock="Right" Text="mazais logs · tas pats ekrāns"
+                         FontFamily="Consolas" FontSize="10" Foreground="#66FFB7EC"
+                         VerticalAlignment="Center" HorizontalAlignment="Right"/>
+            </DockPanel>
+          </Border>
+          <wv2:WebView2 x:Name="ImmersiveBrowser" Source="about:blank"/>
+        </DockPanel>
+      </Border>
+      <!-- Kamera/attēls — mazāks, zem activity lodziņa -->
       <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,28,12"
-              Width="280" MaxHeight="200" CornerRadius="4"
+              Width="280" MaxHeight="160" CornerRadius="4"
               BorderBrush="#66FF2ECB" BorderThickness="1" Background="#8808020A"
               Visibility="{Binding ImmersiveLiveVisibility}">
         <Image x:Name="ImmersiveLiveImage" Stretch="Uniform" Opacity="0.92"/>

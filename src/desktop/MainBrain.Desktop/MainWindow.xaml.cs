@@ -144,8 +144,28 @@ public partial class MainWindow : Window
         {
             await App.EnsureBackendAsync();
             var host = App.Backend!;
-            App.BrowserAutomation.Attach(Browser);
-            if (BrowserMulti is not null)
+            // Primāri immersīvais mazais lodziņš — lietotājs REDZ AI darbību tajā pašā ekrānā
+            if (ImmersiveBrowser is not null)
+            {
+                App.BrowserAutomation.Attach(ImmersiveBrowser);
+                ImmersiveBrowser.NavigationCompleted += (_, __) =>
+                {
+                    try
+                    {
+                        if (ImmersiveBrowser.Source is not null && Browser is not null)
+                        {
+                            Browser.Source = ImmersiveBrowser.Source;
+                        }
+                    }
+                    catch { /* ignore */ }
+                };
+            }
+            else
+            {
+                App.BrowserAutomation.Attach(Browser);
+            }
+
+            if (BrowserMulti is not null && Browser is not null)
             {
                 Browser.NavigationCompleted += (_, __) =>
                 {
@@ -197,12 +217,21 @@ public partial class MainWindow : Window
                 }
 
                 if (args.PropertyName == nameof(MainViewModel.BrowserUrl) &&
-                    !string.IsNullOrWhiteSpace(vm.BrowserUrl) &&
-                    Browser is not null)
+                    !string.IsNullOrWhiteSpace(vm.BrowserUrl))
                 {
                     try
                     {
-                        Browser.Source = new Uri(vm.BrowserUrl);
+                        var uri = new Uri(vm.BrowserUrl);
+                        if (Browser is not null)
+                        {
+                            Browser.Source = uri;
+                        }
+
+                        // Mazais lodziņš uz Matrix — lietotājs REDZ navigāciju
+                        if (ImmersiveBrowser is not null)
+                        {
+                            ImmersiveBrowser.Source = uri;
+                        }
                     }
                     catch { /* ignore bad url */ }
                 }
