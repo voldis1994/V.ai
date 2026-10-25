@@ -58,9 +58,12 @@ if ($env:LOCALAPPDATA -and (Test-Path (Join-Path $env:LOCALAPPDATA "dotnet\dotne
     $env:DOTNET_ROOT = Join-Path $env:LOCALAPPDATA "dotnet"
 }
 
-# 2) llama-server
+# 2) llama-server (bootstrap may already have installed+started it)
 Step "2/5 Install llama-server"
-if (Test-Path $llamaInstall) {
+$llamaExe = Join-Path $env:LOCALAPPDATA "MainBrainOS\llama\llama-server.exe"
+if (Test-Path $llamaExe) {
+    Ok "llama-server already present - skip reinstall (avoids DLL lock)"
+} elseif (Test-Path $llamaInstall) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File $llamaInstall -AcceptDownloads
     if ($LASTEXITCODE -ne 0) { Fail "llama-server install failed" }
 } else {

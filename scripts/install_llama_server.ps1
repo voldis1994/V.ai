@@ -4,6 +4,7 @@
 # without binaries - we scan recent releases for win-cpu-x64.zip instead.
 param(
     [switch]$AcceptDownloads,
+    [switch]$Force,
     [string]$InstallDir = ""
 )
 
@@ -21,9 +22,39 @@ if (-not $InstallDir) {
 $cache = Join-Path $env:LOCALAPPDATA "MainBrainOS\bootstrap-cache"
 New-Item -ItemType Directory -Force -Path $InstallDir, $cache | Out-Null
 
+function Stop-LlamaLocks {
+    param([string]$Dir)
+    $names = @("llama-server", "server")
+    foreach ($n in $names) {
+        Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Warn "Stopping running process: $($_.ProcessName) (PID $($_.Id))"
+            try { $_.Kill(); $_ | Wait-Process -Timeout 8 -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+    # Also kill anything that has the install dir exe as path
+    $exePath = Join-Path $Dir "llama-server.exe"
+    if (Test-Path $exePath) {
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.ExecutablePath -and ($_.ExecutablePath -ieq $exePath) } |
+            ForEach-Object {
+                Write-Warn "Stopping locked llama-server PID $($_.ProcessId)"
+                try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+            }
+    }
+    Start-Sleep -Seconds 1
+}
+
 Write-Step "llama.cpp llama-server install"
 Write-Host "Target: $InstallDir"
 Write-Host "PRIMARY AI path (Ollama NOT required)."
+
+$finalExeEarly = Join-Path $InstallDir "llama-server.exe"
+$metaPath = Join-Path $InstallDir "install.json"
+if ((Test-Path $finalExeEarly) -and -not $Force) {
+    Write-Ok "llama-server already installed: $finalExeEarly"
+    Write-Host "Use -Force to reinstall. Skipping download."
+    exit 0
+}
 
 if (-not $AcceptDownloads) {
     $ans = Read-Host "Download llama-server from GitHub Releases? (Y/N)"
@@ -103,7 +134,26 @@ if (-not $server) {
 }
 
 $binDir = $server.Directory.FullName
-Copy-Item -Path (Join-Path $binDir "*") -Destination $InstallDir -Recurse -Force
+# Previous bootstrap may have started llama-server - unlock DLLs first
+Stop-LlamaLocks -Dir $InstallDir
+
+$copied = $false
+for ($i = 1; $i -le 5; $i++) {
+    try {
+        Copy-Item -Path (Join-Path $binDir "*") -Destination $InstallDir -Recurse -Force -ErrorAction Stop
+        $copied = $true
+        break
+    } catch {
+        Write-Warn "Copy attempt $i failed (file locked?): $_"
+        Stop-LlamaLocks -Dir $InstallDir
+        Start-Sleep -Seconds 2
+    }
+}
+if (-not $copied) {
+    Write-Err "Could not copy llama-server files (DLL still locked). Close llama-server and re-run."
+    exit 1
+}
+
 $finalExe = Join-Path $InstallDir "llama-server.exe"
 if (-not (Test-Path $finalExe)) {
     Copy-Item $server.FullName $finalExe -Force
