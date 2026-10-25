@@ -101,12 +101,14 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
-            StatusText = health.EmergencyStop ? "STOP aktīvs" : "Lokāli aktīvs";
+            StatusText = health.EmergencyStop
+                ? "STOP aktīvs"
+                : "Lokāli · llama.cpp · mācās · bez Ollama";
             IsOffline = false;
             ActiveModel = health.Models.FirstOrDefault(m => m.Available)?.ModelName
                           ?? health.Models.FirstOrDefault()?.Details
                           ?? "Nav konfigurēts";
-            ResourceText = "Resursi: skatīt diagnostiku";
+            ResourceText = "GGUF lokāli · atmiņa mācās · Ollama=OFF";
             var agents = await _api.GetAgentsAsync();
             Agents.Clear();
             Sections.Clear();

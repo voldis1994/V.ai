@@ -103,6 +103,11 @@ class AiPlanner:
 
     async def plan(self, goal_text: str, *, memory_hints: list[str] | None = None) -> PlannedDag:
         fallback = self._fallback_for(goal_text)
+        # Ātrais ceļš: zināmi uzdevumi (hello.py, seja, meklēšana…) — bez lēna LLM plāna
+        # Tas novērš «stulbu» JSON un 100s timeout uzdevumos.
+        if fallback.source not in {"fallback_generic", "fallback_csv"}:
+            return fallback
+
         completion = await self.models.complete(
             role=ModelRole.REASONING,
             system=(
@@ -121,7 +126,8 @@ class AiPlanner:
                 "1) Īsi interpretē ko lietotājs grib. 2) Izveido minimālu izpildāmu DAG."
             ),
             temperature=0.1,
-            max_tokens=1200,
+            max_tokens=800,
+            # complete() may not take timeout - check signature
         )
         if not completion.get("ok"):
             fallback.assumptions.append(

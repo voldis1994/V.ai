@@ -171,18 +171,35 @@ class MemoryStore:
         self._conn.commit()
         return kid
 
+    @staticmethod
+    def _fts_query(query: str) -> str | None:
+        """SQLite FTS5 — tikai droši tokeni (citādi MATCH krīt un mācīšanās «pazūd»)."""
+        import re
+
+        tokens = re.findall(r"[A-Za-z0-9ĀČĒĢĪĶĻŅŠŪŽāčēģīķļņšūž]{2,}", query or "", flags=re.UNICODE)
+        if not tokens:
+            return None
+        # OR + quoted — labāka atbilstība īsiem LV vārdiem
+        return " OR ".join(f'"{t}"' for t in tokens[:12])
+
     def search_knowledge(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
-        cur = self._conn.execute(
-            """
-            SELECT k.id, k.source, k.content, k.verified, k.metadata, k.created_at
-            FROM knowledge_fts f
-            JOIN knowledge k ON k.id = f.id
-            WHERE knowledge_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (query, limit),
-        )
+        fts = self._fts_query(query)
+        if not fts:
+            return []
+        try:
+            cur = self._conn.execute(
+                """
+                SELECT k.id, k.source, k.content, k.verified, k.metadata, k.created_at
+                FROM knowledge_fts f
+                JOIN knowledge k ON k.id = f.id
+                WHERE knowledge_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (fts, limit),
+            )
+        except Exception:  # noqa: BLE001 — bojāts MATCH
+            return []
         rows = []
         for row in cur.fetchall():
             rows.append(

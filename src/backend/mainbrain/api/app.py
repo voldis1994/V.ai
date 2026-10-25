@@ -124,12 +124,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "goals",
                 "agents50",
                 "llama.cpp",
+                "no_ollama",
+                "self_learning_rag",
                 "web.search",
                 "full_pc",
                 "camera",
                 "face.detect",
                 "audio.speak",
             ],
+            "inference": {
+                "primary": "llama.cpp",
+                "ollama_enabled": bool(st.settings.ollama_enabled),
+                "learning": "rag_knowledge_base",
+                "learning_note": (
+                    "Mācās no sarunām (SQLite zināšanu bāze). "
+                    "Ollama izslēgta. GGUF svari netiek pārtrenēti automātiski."
+                ),
+            },
         }
 
     @app.get("/auth/status", dependencies=[Depends(require_auth)])

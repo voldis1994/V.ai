@@ -64,8 +64,51 @@ def test_local_greet_without_llm():
     async def run():
         r1 = await svc.chat(ChatRequest(message="sveiks", session_id="x"))
         assert "Sveiki" in r1.reply
+        assert "Ollama" in r1.reply or "llama" in r1.reply.lower()
 
     asyncio.run(run())
+
+
+def test_meta_ollama_and_learning_without_llm():
+    import asyncio
+
+    from mainbrain.contracts.schemas import ChatRequest
+
+    svc = ChatService(models=None, brain=None)  # type: ignore[arg-type]
+
+    async def run():
+        r1 = await svc.chat(ChatRequest(message="Vai tu pats mācies?", session_id="meta1"))
+        assert "māc" in r1.reply.lower()
+        assert "ollama" in r1.reply.lower() or "GGUF" in r1.reply or "zināšanu" in r1.reply.lower()
+
+        r2 = await svc.chat(ChatRequest(message="Vai tiek kustināts Ollama?", session_id="meta2"))
+        assert "ollama" in r2.reply.lower()
+        low = r2.reply.lower()
+        assert "nav" in low or "izslēgt" in low or "neizmanto" in low
+
+    asyncio.run(run())
+
+
+def test_auto_remember_indexes_knowledge(tmp_path: Path):
+    from mainbrain.learning.engine import LearningEngine
+    from mainbrain.memory.store import MemoryStore
+
+    class _Brain:
+        def __init__(self) -> None:
+            self.store = MemoryStore(tmp_path / "mem.db")
+            self.learning = LearningEngine(self.store)
+
+    brain = _Brain()
+    svc = ChatService(models=None, brain=brain)  # type: ignore[arg-type]
+    ok = svc._remember(
+        "Python",
+        "Python ir programmēšanas valoda ar vienkāršu sintaksi.",
+        kind="chat",
+    )
+    assert ok is True
+    hits = brain.store.search_knowledge("Python")
+    assert hits
+    assert "programmēšanas" in hits[0]["content"]
 
 
 def test_chat_endpoint(tmp_path: Path):

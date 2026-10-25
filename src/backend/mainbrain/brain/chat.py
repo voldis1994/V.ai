@@ -18,27 +18,28 @@ _CHAT_LLM_BUDGET_SEC = 70.0
 _CHAT_RETRY_BUDGET_SEC = 28.0
 
 
-SYSTEM_CHAT = """Tu esi Main Brain — Windows AI ar piekļuvi VISAM lietotāja datoram un internetam.
+SYSTEM_CHAT = """Tu esi Main Brain — lokāls Windows AI (llama.cpp + GGUF). Ollama NAV ieslēgta.
+Tev ir: viss dators, internets, un lokālā zināšanu bāze (tu mācies no sarunām).
 Noteikumi:
-1) Atbildi latviešu valodā, skaidri un pēc būtības.
-2) Atbildi TIKAI uz jautājumu. Nekad neatkārto tekstu.
-3) Ja ir tīmekļa/meklēšanas konteksts — balsties uz to; neizdomā.
+1) Atbildi latviešu valodā — skaidri, konkrēti, bez tukšām frāzēm.
+2) Atbildi TIKAI uz jautājumu. Nekad neatkārto lietotāja tekstu.
+3) Ja dots konteksts (zināšanas / internets) — balsties uz to; neizdomā faktus.
 4) Matemātiku rēķini precīzi.
-5) Ja lūdz izveidot/palaist/labot datorā — īsi apstiprini izpildi (full_access)."""
+5) Ja nezini — saki «Nezinu» un piedāvā sameklēt vai uztaisīt.
+6) Īsas atbildes (2–6 teikumi), ja nav lūgts citādi."""
 
-SYSTEM_EXPLAIN = """Tu esi Main Brain skolotājs ar internetu un datoru.
-Izskaidro tēmu latviešu valodā strukturēti:
+SYSTEM_EXPLAIN = """Tu esi Main Brain skolotājs (llama.cpp, bez Ollama).
+Izskaidro latviešu valodā:
 1) Kas tas ir (1–2 teikumi)
-2) Kā tas strādā (2–4 punkti)
-3) Neliels piemērs (kods vai soļi), ja der
-Ja dots tīmekļa konteksts — izmanto to. Bez atkārtojumiem."""
+2) Kā strādā (2–4 punkti)
+3) Neliels piemērs, ja der
+Izmanto doto kontekstu. Bez atkārtojumiem un bez muļķībām."""
 
-SYSTEM_SEARCH = """Tu esi Main Brain ar INTERNETU un pilnu datoru.
-Lietotājs lūdz sameklēt. Tev ir tīmekļa rezultāti kontekstā.
+SYSTEM_SEARCH = """Tu esi Main Brain ar internetu un lokālo atmiņu (bez Ollama).
 1) Apkopo faktus no rezultātiem
-2) Norādi 1–3 avotu URL
-3) Ja rezultāti vāji — saki to un piedāvā nākamo soli (uztaisi / atver pārlūkā)
-Bez muļķībām un bez atkārtojumiem."""
+2) Norādi 1–3 URL, ja ir
+3) Ja rezultāti vāji — saki to godīgi
+Bez atkārtojumiem."""
 
 _BAD_REPLY = re.compile(
     r"(?i)("
@@ -140,12 +141,22 @@ class ChatService:
                 return await self._camera_sense(req, session, history, user_msg)
 
         if intent == Intent.GREET:
-            return self._finish(session, history, "Sveiki! Kā varu palīdzēt?")
+            return self._finish(
+                session,
+                history,
+                "Sveiki! Esmu Main Brain — lokāls AI (llama.cpp + GGUF, bez Ollama). "
+                "Es mācos no mūsu sarunām zināšanu bāzē. Ko darām?",
+            )
 
         if intent == Intent.MATH:
             math_reply = self._try_math(user_msg)
             if math_reply:
                 return self._finish(session, history, math_reply)
+
+        # Meta: mācīšanās / Ollama — godīga, deterministiska atbilde (bez LLM muļķībām)
+        meta = self._meta_about_self(user_msg)
+        if meta:
+            return self._finish(session, history, meta)
 
         # Valodu īsie FAQ
         if re.search(r"(?i)(valod|language|scottish|scotland|skotij)", user_msg):
@@ -165,7 +176,10 @@ class ChatService:
 
         # Personas / meklēšana — internets + FIZISKI atver pārlūku
         if intent in {Intent.PERSON, Intent.SEARCH}:
-            return await self._search_and_act(req, session, history, user_msg, topic, intent)
+            resp = await self._search_and_act(req, session, history, user_msg, topic, intent)
+            if resp.reply and not _is_junk(resp.reply):
+                self._remember(topic, resp.reply, kind="search")
+            return resp
 
         if intent in {Intent.LEARN, Intent.EXPLAIN}:
             local_hits = self._search_local_knowledge(topic)
@@ -179,18 +193,32 @@ class ChatService:
                 history=history,
                 local_hits=local_hits + web_hits,
             )
-            if intent == Intent.LEARN and reply and not _is_junk(reply):
-                self._remember(topic, reply)
+            if reply and not _is_junk(reply):
+                self._remember(topic, reply, kind="learn" if intent == Intent.LEARN else "explain")
+                if intent == Intent.LEARN:
+                    reply = f"{reply}\n\n[Iemācīts] Saglabāju lokālajā zināšanu bāzē — nākamreiz izmantošu."
             return self._finish(session, history, reply)
 
-        # Vispārīgs chat
+        # Vispārīgs chat — VIENMĒR atmiņa; jautājumiem arī internets; pēc tam mācās
+        local_hits = self._search_local_knowledge(topic)
+        if not local_hits:
+            local_hits = self._search_local_knowledge(user_msg)
+        web_hits: list[str] = []
+        if self._internet_enabled() and self._looks_like_question(user_msg):
+            web_hits = await self._search_web(topic if topic else user_msg)
         reply = await self._llm_task(
             intent=Intent.CHAT,
             user_msg=user_msg,
             topic=topic,
             history=history,
-            local_hits=[],
+            local_hits=local_hits + web_hits,
         )
+        learned = False
+        if reply and not _is_junk(reply):
+            learned = self._remember(topic or user_msg, reply, kind="chat")
+        if learned and self._looks_like_question(user_msg):
+            # Klusa norāde — lietotājs redz, ka sistēma mācās
+            reply = f"{reply}\n\n〔atmiņa〕 Saglabāju šo atbildi nākamajām reizēm."
         return self._finish(session, history, reply)
 
     def _actor(self) -> PhysicalActor | None:
@@ -438,24 +466,24 @@ class ChatService:
         history: list[dict[str, str]],
         local_hits: list[str],
     ) -> str:
-        # Īsākas atbildes = ātrāka CPU inference (tokēni × ātrums)
+        # 7B Q4: pietiekami tokeni kvalitātei, bet ne tik daudz, lai 100s timeout
         if intent == Intent.EXPLAIN or intent == Intent.LEARN:
             system = SYSTEM_EXPLAIN
-            max_tokens = 280
+            max_tokens = 360
             role = ModelRole.CODING if self._looks_technical(topic) else ModelRole.REASONING
         elif intent == Intent.SEARCH:
             system = SYSTEM_SEARCH
-            max_tokens = 200
+            max_tokens = 260
             role = ModelRole.REASONING
         else:
             system = SYSTEM_CHAT
-            max_tokens = 140
+            max_tokens = 220
             role = ModelRole.REASONING
 
         context_bits = ""
         if local_hits:
-            joined = "\n- ".join(local_hits[:2])
-            context_bits = f"\n\nKonteksts:\n- {joined}"
+            joined = "\n- ".join(h[:350] for h in local_hits[:3])
+            context_bits = f"\n\nZināšanas / konteksts (izmanto!):\n- {joined}"
 
         if intent == Intent.SEARCH:
             prompt_user = (
@@ -563,10 +591,59 @@ class ChatService:
         if intent in {Intent.SEARCH, Intent.PERSON} and local_hits:
             reply = f"[Avoti: {len(local_hits)}]\n{reply}"
 
-        if intent == Intent.LEARN:
-            reply = f"{reply}\n\n[Iemācīts] Saglabāju īsu kopsavilkumu lokālajā zināšanu bāzē."
-
         return reply
+
+    @staticmethod
+    def _looks_like_question(text: str) -> bool:
+        t = (text or "").strip()
+        if "?" in t:
+            return True
+        return bool(
+            re.search(
+                r"(?i)^\s*(kas|kā|kur|kad|kāpēc|cik|vai|who|what|where|when|why|how|which)\b",
+                t,
+            )
+        )
+
+    @staticmethod
+    def _meta_about_self(user_msg: str) -> str | None:
+        """Godīgas atbildes par mācīšanos / Ollama — bez LLM."""
+        t = (user_msg or "").strip()
+        if not t:
+            return None
+        about_learn = bool(
+            re.search(
+                r"(?i)\b(mācies|mācās|mācīties|mācīšan|iemācies|pati?\s+māc|self[- ]?learn|"
+                r"learn(s|ing)?\s+(by\s+itself|alone|automatically)|vai\s+tu\s+māc)\b",
+                t,
+            )
+        )
+        about_ollama = bool(re.search(r"(?i)\bollama\b", t))
+        about_model = bool(
+            re.search(r"(?i)\b(gguf|llama\.?cpp|kāds\s+model|kurš\s+model|qwen)\b", t)
+        )
+        if not (about_learn or about_ollama or about_model):
+            return None
+        parts: list[str] = []
+        if about_ollama or about_model:
+            parts.append(
+                "Ollama NAV ieslēgta un netiek kustināta. "
+                "Primārā AI ir llama.cpp (llama-server) + lokāls GGUF (piem. Qwen). "
+                "MainBrain startā Ollama ir izslēgta (MAINBRAIN_OLLAMA_ENABLED=false)."
+            )
+        if about_learn:
+            parts.append(
+                "Jā — es pats mācos, bet ne pārtrenējot GGUF svarus. "
+                "Katru labu atbildi saglabāju lokālajā zināšanu bāzē (SQLite + FTS) un "
+                "nākamajās sarunās to atkal izmantoju. "
+                "Var arī teikt «iemācies …» — tad apzināti saglabāju tēmu. "
+                "Pilna LoRA/fine-tune apmācība šobrīd nav automātiska."
+            )
+        if about_ollama and not about_learn:
+            parts.append(
+                "Ja Task Managerā redzi Ollama — tas ir cits process, Main Brain to neizmanto."
+            )
+        return " ".join(parts)
 
     def _internet_enabled(self) -> bool:
         runtime = getattr(self.brain, "runtime", None)
@@ -611,20 +688,41 @@ class ChatService:
         except Exception as exc:  # noqa: BLE001
             return [f"(Interneta meklēšana neizdevās: {exc})"]
 
-    def _remember(self, topic: str, reply: str) -> None:
+    def _remember(self, topic: str, reply: str, *, kind: str = "chat") -> bool:
+        """Nepārtraukta mācīšanās: labas atbildes → lokālā zināšanu bāze (ne Ollama, ne GGUF fine-tune)."""
         store = getattr(self.brain, "store", None)
         if store is None:
-            return
-        summary = reply.split("\n\n[Iemācīts]")[0].strip()[:800]
+            return False
+        summary = reply.split("\n\n[Iemācīts]")[0].split("\n\n〔atmiņa〕")[0].strip()[:800]
+        if _is_junk(summary) or len(summary) < 24:
+            return False
+        topic_key = (topic or "").strip()[:120] or "saruna"
+        # Neindexē meta/atkārtotus dublikātus ar to pašu sākumu
+        try:
+            existing = store.search_knowledge(topic_key, limit=3)
+            for row in existing or []:
+                prev = str(row.get("content") or "")
+                if summary[:80].lower() in prev.lower():
+                    return False
+        except Exception:  # noqa: BLE001
+            pass
         try:
             store.index_knowledge(
-                f"{topic}\n{summary}",
-                source=f"learn:{topic[:80]}",
+                f"{topic_key}\n{summary}",
+                source=f"{kind}:{topic_key[:80]}",
                 verified=False,
-                metadata={"kind": "learn", "topic": topic, "at": utc_now().isoformat()},
+                metadata={"kind": kind, "topic": topic_key, "at": utc_now().isoformat()},
             )
+            # Metrika — redzams /learning/metrics
+            learning = getattr(self.brain, "learning", None)
+            if learning is not None:
+                try:
+                    learning.record_outcome("ChatMemory", success=True, duration_ms=0)
+                except Exception:  # noqa: BLE001
+                    pass
+            return True
         except Exception:  # noqa: BLE001
-            return
+            return False
 
     @staticmethod
     def _looks_technical(topic: str) -> bool:
