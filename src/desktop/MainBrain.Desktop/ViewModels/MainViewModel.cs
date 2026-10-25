@@ -345,24 +345,24 @@ public partial class MainViewModel : ObservableObject
                 await Task.Delay(900);
             }
 
-            FinishVisibleAction(display, reply);
-
-            // Saglabāto failu atver DESKTOP pēc atbildes (ne backend pipe laikā)
+            // Immersīvajā: PALIEKAM Matrix — neraujam ārā uz Notepad/VS Code
             if (!string.IsNullOrWhiteSpace(result.OpenPath) && File.Exists(result.OpenPath))
             {
                 try
                 {
-                    Process.Start(new ProcessStartInfo
+                    var ext = Path.GetExtension(result.OpenPath).ToLowerInvariant();
+                    if (ext is ".py" or ".txt" or ".md" or ".cs" or ".json")
                     {
-                        FileName = result.OpenPath,
-                        UseShellExecute = true,
-                    });
+                        EditorText = File.ReadAllText(result.OpenPath);
+                    }
                 }
                 catch
                 {
                     // ignore
                 }
             }
+
+            FinishVisibleAction(display, reply);
 
             // Audio TIKAI ja backend atdeva SpeakText (= lietotājs teica pasaki/skaļi/…)
             if (!string.IsNullOrWhiteSpace(result.SpeakText))
@@ -395,9 +395,12 @@ public partial class MainViewModel : ObservableObject
 
     private void FinishVisibleAction(string display, string fallback)
     {
+        // AIZVER mazo interneta logu (WebView → about:blank)
         ShowImmersiveActivity = false;
+        BrowserUrl = "about:blank";
         MatrixStatus = "";
         FormedAnswer = string.IsNullOrWhiteSpace(display) ? fallback : display;
+        RestoreMainOverlay?.Invoke();
     }
 
     private sealed record ActionPreview(bool ShowPip, string? OpenedUrl);
@@ -440,10 +443,9 @@ public partial class MainViewModel : ObservableObject
             MatrixStatus = "◈ TAISU …";
             ActivityTitle = "◈ KO ES DARU · rakstu failu";
             FormedAnswer =
-                "Taisu uzdevumu:\n1) Veidoju failu\n2) Rakstu kodu\n3) Atveru redaktorā (VS Code/Notepad)\n\nSkaties Windows logu — tur redzēsi, ko es daru.";
+                "Taisu uzdevumu šeit, Matrix ekrānā:\n1) Veidoju failu\n2) Rakstu kodu\n3) Rādīšu saturu šeit — NEIZEJU ārā uz citu programmu.";
             ShowImmersiveActivity = false;
-            // Ļaujam redaktoram/Notepad parādīties priekšā
-            YieldForExternalAction?.Invoke("build");
+            // NE Yield — paliekam immersīvajā (lietotājs teica: neizej ārā)
             return new ActionPreview(false, null);
         }
 
@@ -451,7 +453,8 @@ public partial class MainViewModel : ObservableObject
         {
             MatrixStatus = "◈ ATVERU PROGRAMMU …";
             ActivityTitle = "◈ KO ES DARU · programma";
-            FormedAnswer = "Atveru programmu no tava datora. Windows logā redzēsi to uzreiz.";
+            FormedAnswer = "Atveru programmu no tava datora.";
+            // Tikai «atver …» — tad drīkst yield
             YieldForExternalAction?.Invoke("open");
             return new ActionPreview(false, null);
         }
@@ -553,23 +556,8 @@ public partial class MainViewModel : ObservableObject
                     }
                 }
 
-                // Immersīvā: NE minimizē Matrix — fails tiks atvērts pēc FormedAnswer
-                if (!stayOnMatrix)
-                {
-                    YieldForExternalAction?.Invoke("file");
-                    try
-                    {
-                        Process.Start(new ProcessStartInfo
-                        {
-                            FileName = result.OpenPath,
-                            UseShellExecute = true,
-                        });
-                    }
-                    catch
-                    {
-                        // ignore
-                    }
-                }
+                // Immersīvā: NEIZEJAM ārā — fails jau ielasīts EditorText / FormedAnswer
+                // Ārējo programmu atver TIKAI ja lietotājs teica «atver …» (ne build/search)
             }
 
             // SpeakLocal — tikai no SendGoalAsync (pēc PiP aizvēršanas), lai nebūtu dubultā
@@ -588,7 +576,7 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>Noņem tehniskās piezīmes — atstāj to, ko AI «atrada» saviem vārdiem.</summary>
+    /// <summary>Noņem tehniskās piezīmes un muļķīgas frāzes no atbildes.</summary>
     private static string HumanizeReply(string reply)
     {
         if (string.IsNullOrWhiteSpace(reply))
@@ -601,6 +589,19 @@ public partial class MainViewModel : ObservableObject
         t = Regex.Replace(t, @"\n*\[Iemācīts\][^\n]*", "", RegexOptions.IgnoreCase);
         t = Regex.Replace(t, @"\(Lokālais modelis[^\)]*\)", "", RegexOptions.IgnoreCase);
         t = Regex.Replace(t, @"Ollama netiek izmantota\.", "", RegexOptions.IgnoreCase);
+        // Atmet rindiņas ar tipisku junk
+        var lines = t.Split('\n')
+            .Where(l =>
+            {
+                var x = l.Trim();
+                if (x.Length == 0) return true;
+                var low = x.ToLowerInvariant();
+                return !low.Contains("nezinu, kāds") &&
+                       !low.Contains("kuru informāciju meklētu") &&
+                       !low.Contains("pasaki audio") &&
+                       !low.Contains("sameklē mani");
+            });
+        t = string.Join("\n", lines);
         t = Regex.Replace(t, @"\n{3,}", "\n\n").Trim();
         return t;
     }

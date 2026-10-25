@@ -227,13 +227,27 @@ public partial class MainWindow : Window
                             Browser.Source = uri;
                         }
 
-                        // Mazais lodziņš uz Matrix — lietotājs REDZ navigāciju
                         if (ImmersiveBrowser is not null)
                         {
                             ImmersiveBrowser.Source = uri;
                         }
                     }
                     catch { /* ignore bad url */ }
+                }
+
+                // Kad PiP slēdzas — HARD aizver WebView (par interneta lapu)
+                if (args.PropertyName == nameof(MainViewModel.ShowImmersiveActivity) &&
+                    !vm.ShowImmersiveActivity)
+                {
+                    try
+                    {
+                        var blank = new Uri("about:blank");
+                        if (ImmersiveBrowser is not null)
+                        {
+                            ImmersiveBrowser.Source = blank;
+                        }
+                    }
+                    catch { /* ignore */ }
                 }
             };
         }

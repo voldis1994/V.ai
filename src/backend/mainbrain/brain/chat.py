@@ -402,16 +402,8 @@ class ChatService:
 
         url = duckduckgo_url(search_q)
         actor = self._actor()
-        # NEIZSAUCAM browser.navigate caur pipe — tas deadlock'oja Desktop (gaida /chat).
-        # PiP jau iestatīts no BeginVisibleAction. Sistēmas pārlūku var palaist fona pavedienā.
-        opened: dict[str, Any] = {"url": url, "pip": "desktop"}
-        if actor is not None:
-            try:
-                # Tikāi start "" url — bez bridge, bez gaidīšanas
-                opened = actor.open_url(url, via_bridge=False)
-                opened["url"] = url
-            except Exception as exc:  # noqa: BLE001
-                opened = {"url": url, "error": str(exc)}
+        # TIKAI Desktop PiP — NEATVERAM ārējo Chrome/Edge (lietotājs teica: lapa jāaizver, nevis jauna)
+        opened: dict[str, Any] = {"url": url, "pip": "desktop-only"}
 
         local_hits = self._search_local_knowledge(q) or self._search_local_knowledge(search_q)
         web_hits: list[str] = []
@@ -432,13 +424,16 @@ class ChatService:
             except Exception:  # noqa: BLE001
                 web_hits, wiki_bits = [], []
 
-        facts = [h for h in (wiki_bits + web_hits + local_hits) if h and not str(h).startswith("(")]
+        facts = [
+            h
+            for h in (wiki_bits + web_hits + local_hits)
+            if h and not str(h).startswith("(") and not _is_junk(str(h)) and not self._is_noise_fact(str(h))
+        ]
         spoken = self._facts_to_reply(q or search_q, facts)
         if not spoken:
             spoken = (
-                f"Par «{q or search_q}» sameklēju internetā. "
-                "Mazajā lodziņā bija DuckDuckGo rezultāti (piem. LinkedIn u.c.). "
-                "Pilnu kopsavilkumu no avotiem šoreiz neizdevās salikt — bet meklēšana notika."
+                f"Par «{q or search_q}» sameklēju internetā (DuckDuckGo mazajā lodziņā). "
+                "Īsu, tīru kopsavilkumu no avotiem šoreiz nesaliku — bet meklēšana notika un lodziņu aizveru."
             )
 
         # Saglabā .md BEZ Notepad gaidīšanas (Desktop var atvērt pēc atbildes)
@@ -518,20 +513,45 @@ class ChatService:
             return None
 
     @staticmethod
+    def _is_noise_fact(text: str) -> bool:
+        """Atmet muļķīgus / meta / atkārtotus meklēšanas gabalus."""
+        t = (text or "").strip().lower()
+        if len(t) < 20:
+            return True
+        bad = (
+            "nezinu",
+            "nevaru informēt",
+            "kuru informāciju meklētu",
+            "sameklē mani",
+            "pasaki audio",
+            "izmantojot internetu",
+            "as an ai",
+            "privātuma",
+            "atbilst noteikumiem",
+            "vaicājums:",
+        )
+        return any(b in t for b in bad)
+
+    @staticmethod
     def _facts_to_reply(topic: str, facts: list[str]) -> str:
-        """Saviem vārdiem — ko atrada, nevis sausi linki."""
+        """Saviem vārdiem — ko atrada, nevis sausi linki / muļķības."""
         if not facts:
             return ""
         cleaned: list[str] = []
-        for f in facts[:4]:
+        for f in facts[:6]:
             chunk = str(f).strip()
-            # Noņem «Avots:» rindas no runājamā teksta (URL paliek žurnālā)
+            if _is_junk(chunk) or ChatService._is_noise_fact(chunk):
+                continue
             chunk = re.sub(r"(?im)^\s*Avots:\s*\S+\s*$", "", chunk).strip()
-            chunk = re.sub(r"\s+", " ", chunk)
-            if len(chunk) > 380:
-                chunk = chunk[:380].rsplit(" ", 1)[0] + "…"
-            if chunk and chunk not in cleaned:
+            # Noņem HTML / pārmērīgus URL blokus no vidus
+            chunk = re.sub(r"https?://\S+", "", chunk)
+            chunk = re.sub(r"\s+", " ", chunk).strip(" -•|")
+            if len(chunk) > 280:
+                chunk = chunk[:280].rsplit(" ", 1)[0] + "…"
+            if chunk and len(chunk) >= 24 and chunk not in cleaned:
                 cleaned.append(chunk)
+            if len(cleaned) >= 3:
+                break
         if not cleaned:
             return ""
         if len(cleaned) == 1:
@@ -1022,14 +1042,8 @@ class ChatService:
                         break
 
         open_path = paths[0] if paths else None
-        actor = self._actor()
-        if actor is not None and open_path:
-            try:
-                # Preferē VS Code, ja ir; citādi Notepad — lietotājs REDZ darbu
-                opened_with = actor.open_in_best_editor(open_path)
-                parts.append(f"Atvēru ar {opened_with}: {open_path}")
-            except Exception as exc:  # noqa: BLE001
-                parts.append(f"(Neizdevās atvērt failu: {exc})")
+        if open_path:
+            parts.append(f"Fails saglabāts: {open_path} (rādu šeit — neizeju uz citu programmu).")
 
         summary = "\n".join(parts)
         self._remember(goal[:120], summary, kind="execute")
@@ -1100,24 +1114,25 @@ class ChatService:
         steps = [
             f"1) Veidoju mapi: {root}",
             f"2) Rakstu failu: {path}",
-            f"3) Saturs:\n```\n{code}```",
+            f"3) Saturs:\n{code}",
         ]
         try:
+            # Tikai raksta failu — NEATVER Notepad/VS Code (paliekam Matrix)
             if actor is not None:
-                actor.create_and_open_text(path, code, open_with="auto")
-                steps.append("4) Atvēru redaktorā (VS Code / Notepad) — skaties logu.")
+                actor.write_text_file(path, code)
             else:
                 path.write_text(code, encoding="utf-8")
-                steps.append("4) Fails saglabāts (redaktoru nevarēju atvērt).")
+            steps.append("4) Gatavs. Fails saglabāts — skaties saturu šeit (neizeju uz citu programmu).")
         except Exception as exc:  # noqa: BLE001
             try:
                 path.write_text(code, encoding="utf-8")
+                steps.append("4) Fails saglabāts.")
             except OSError:
                 return None
-            steps.append(f"4) Fails saglabāts; atvēršana: {exc}")
+            steps.append(f"(Piezīme: {exc})")
 
-        reply = "Taisu Python skriptu — lūk, ko daru:\n" + "\n".join(steps)
-        spoken = f"Izveidoju failu {fname} un atvēru to redaktorā."
+        reply = "Uzdevums izpildīts — Python skripts:\n" + "\n".join(steps)
+        spoken = f"Izveidoju failu {fname}."
         return reply, str(path), spoken
 
     @staticmethod
