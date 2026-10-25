@@ -1,0 +1,20 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+  <sys:String x:Key="AppTitle">Main Brain OS</sys:String>
+  <sys:String x:Key="NavMainBrain">Galvenais smadzenes</sys:String>
+  <sys:String x:Key="NavAgents">Aģenti (50)</sys:String>
+  <sys:String x:Key="NavTasks">Uzdevumi</sys:String>
+  <sys:String x:Key="NavProjects">Projekti</sys:String>
+  <sys:String x:Key="NavMemory">Atmiņa</sys:String>
+  <sys:String x:Key="NavModels">Modeļu pārvaldnieks</sys:String>
+  <sys:String x:Key="NavApprovals">Apstiprinājumi</sys:String>
+  <sys:String x:Key="NavLogs">Žurnāli</sys:String>
+  <sys:String x:Key="NavSettings">Iestatījumi</sys:String>
+  <sys:String x:Key="FocusMode">Fokusa režīms</sys:String>
+  <sys:String x:Key="MultiMode">Vairāku logu režīms</sys:String>
+  <sys:String x:Key="Stop">STOP</sys:String>
+  <sys:String x:Key="Send">Sūtīt</sys:String>
+  <sys:String x:Key="Offline">Bezsaistē</sys:String>
+  <sys:String x:Key="Online">Lokāli aktīvs</sys:String>
+</ResourceDictionary>

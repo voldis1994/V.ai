@@ -1,0 +1,1 @@
+"""Lokālais FastAPI starpnieks."""

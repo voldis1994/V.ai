@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "notes_lv": "Atvērto svaru GGUF katalogs Main Brain OS lomām. Licences: skatīt katra modeļa Hugging Face lapu (parasti Apache-2.0 / Qwen licence). Lejupielāde tikai ar lietotāja apstiprinājumu.",
+  "profiles": {
+    "light": {
+      "description_lv": "Mazāka aparatūra (~2–4 GB diska, mazāka RAM)",
+      "models": ["reasoning_light", "coding_light", "embedding"]
+    },
+    "standard": {
+      "description_lv": "Standarta komplekts (~6–10 GB)",
+      "models": ["reasoning_light", "coding_light", "embedding", "vision_light"]
+    }
+  },
+  "models": {
+    "reasoning_light": {
+      "role": "reasoning",
+      "filename": "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+      "approx_mb": 1100,
+      "license": "Apache-2.0 / Qwen",
+      "source_page": "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF",
+      "url": "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
+    },
+    "coding_light": {
+      "role": "coding",
+      "filename": "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+      "approx_mb": 1100,
+      "license": "Apache-2.0 / Qwen",
+      "source_page": "https://huggingface.co/bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+      "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
+    },
+    "embedding": {
+      "role": "embedding",
+      "filename": "nomic-embed-text-v1.5.Q4_K_M.gguf",
+      "approx_mb": 90,
+      "license": "Apache-2.0",
+      "source_page": "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF",
+      "url": "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf"
+    },
+    "vision_light": {
+      "role": "vision",
+      "filename": "moondream2-text-model-f16.gguf",
+      "approx_mb": 1550,
+      "license": "Apache-2.0 (moondream)",
+      "source_page": "https://huggingface.co/vikhyatk/moondream2",
+      "url": "https://huggingface.co/vikhyatk/moondream2/resolve/main/moondream2-text-model-f16.gguf",
+      "optional_note_lv": "Viegls redzes modelis; dažām redzes funkcijām var būt papildu projektoru faili."
+    }
+  }
+}
