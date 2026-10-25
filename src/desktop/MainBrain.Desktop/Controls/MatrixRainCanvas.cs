@@ -206,7 +206,7 @@ public sealed class MatrixRainCanvas : FrameworkElement
             return;
         }
 
-        dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(2, 6, 8)), null, new Rect(_size));
+        dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(8, 2, 10)), null, new Rect(_size));
 
         // snapshot counts — nerediģē list OnRender laikā
         var dropCount = _drops.Count;
@@ -227,10 +227,10 @@ public sealed class MatrixRainCanvas : FrameworkElement
                 }
 
                 var t = 1.0 - i / (double)Math.Max(1, d.Chars.Length);
-                var g = (byte)(40 + 200 * t);
+                var pink = (byte)(50 + 200 * t);
                 var brush = i == 0
-                    ? new SolidColorBrush(Color.FromArgb(240, 180, 255, 200))
-                    : new SolidColorBrush(Color.FromArgb((byte)(40 + 180 * t), 0, g, (byte)(g * 0.55)));
+                    ? new SolidColorBrush(Color.FromArgb(245, 255, 200, 240))
+                    : new SolidColorBrush(Color.FromArgb((byte)(40 + 180 * t), pink, (byte)(pink * 0.25), (byte)(pink * 0.85)));
                 var ft = new FormattedText(
                     d.Chars[i].ToString(),
                     CultureInfo.InvariantCulture,
@@ -252,7 +252,7 @@ public sealed class MatrixRainCanvas : FrameworkElement
             }
 
             var f = _floaters[fi];
-            var brush = new SolidColorBrush(Color.FromArgb((byte)(f.Alpha * 255), 0, 255, 140));
+            var brush = new SolidColorBrush(Color.FromArgb((byte)(f.Alpha * 255), 255, 46, 203));
             dc.PushTransform(new RotateTransform(f.Angle * 180 / Math.PI, f.X, f.Y));
             var ft = new FormattedText(
                 f.Char.ToString(),

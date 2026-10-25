@@ -28,7 +28,7 @@ public sealed class MatrixTypewriterBox : TextBox
         TextWrapping = TextWrapping.Wrap;
         BorderThickness = new Thickness(0);
         Background = Brushes.Transparent;
-        Foreground = new SolidColorBrush(Color.FromRgb(120, 255, 170));
+        Foreground = new SolidColorBrush(Color.FromRgb(255, 120, 210));
         FontFamily = new FontFamily("Consolas");
         FontSize = 16;
         CaretBrush = Brushes.Transparent;

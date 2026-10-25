@@ -460,7 +460,8 @@ public sealed class MatrixMindCanvas : FrameworkElement
             return;
         }
 
-        dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(1, 4, 6)), null, new Rect(_size));
+        // Cyber pink fons
+        dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(8, 2, 10)), null, new Rect(_size));
 
         // Lietus (vājāks, kad atbilde ir salidojusi)
         var rainAlphaScale = _holdingAnswer ? 0.35 : (IsThinking ? 1.15 : 0.85);
@@ -482,11 +483,11 @@ public sealed class MatrixMindCanvas : FrameworkElement
                 }
 
                 var t = 1.0 - i / (double)Math.Max(1, d.Chars.Length);
-                var g = (byte)(30 + 190 * t * rainAlphaScale);
-                var a = (byte)Math.Clamp((int)((i == 0 ? 220 : 40 + 160 * t) * rainAlphaScale), 0, 255);
+                var pink = (byte)(40 + 200 * t * rainAlphaScale);
+                var a = (byte)Math.Clamp((int)((i == 0 ? 230 : 40 + 170 * t) * rainAlphaScale), 0, 255);
                 var brush = i == 0
-                    ? new SolidColorBrush(Color.FromArgb(a, 170, 255, 200))
-                    : new SolidColorBrush(Color.FromArgb(a, 0, g, (byte)(g * 0.5)));
+                    ? new SolidColorBrush(Color.FromArgb(a, 255, 200, 240))
+                    : new SolidColorBrush(Color.FromArgb(a, pink, (byte)(pink * 0.25), (byte)(pink * 0.85)));
                 var ft = new FormattedText(
                     d.Chars[i].ToString(),
                     CultureInfo.InvariantCulture,
@@ -499,7 +500,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
             }
         }
 
-        // Lidojošie hieroglifi
+        // Lidojošie hieroglifi — cyber pink
         if (!_holdingAnswer || IsThinking)
         {
             var floaterCount = _floaters.Count;
@@ -517,7 +518,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
                     alpha = Math.Min(1, alpha + 0.15 + 0.1 * Math.Sin(_pulse + fi));
                 }
 
-                var brush = new SolidColorBrush(Color.FromArgb((byte)(alpha * 255), 0, 255, 140));
+                var brush = new SolidColorBrush(Color.FromArgb((byte)(alpha * 255), 255, 46, 203));
                 dc.PushTransform(new RotateTransform(f.Angle * 180 / Math.PI, f.X, f.Y));
                 var ft = new FormattedText(
                     f.Char.ToString(),
@@ -536,11 +537,11 @@ public sealed class MatrixMindCanvas : FrameworkElement
         for (var i = 0; i < _particles.Count; i++)
         {
             var p = _particles[i];
-            var glow = p.Settled ? (byte)255 : (byte)200;
+            var glow = p.Settled ? (byte)255 : (byte)210;
             var brush = new SolidColorBrush(
                 p.Settled
-                    ? Color.FromArgb(glow, 140, 255, 190)
-                    : Color.FromArgb(210, 0, 255, 120));
+                    ? Color.FromArgb(glow, 255, 160, 230)
+                    : Color.FromArgb(220, 255, 46, 203));
             var ft = new FormattedText(
                 p.Char.ToString(),
                 CultureInfo.InvariantCulture,
@@ -551,8 +552,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
                 VisualTreeHelper.GetDpi(this).PixelsPerDip);
             if (p.Settled)
             {
-                // viegls glow
-                var glowBrush = new SolidColorBrush(Color.FromArgb(50, 0, 255, 140));
+                var glowBrush = new SolidColorBrush(Color.FromArgb(55, 255, 46, 203));
                 var glowFt = new FormattedText(
                     p.Char.ToString(),
                     CultureInfo.InvariantCulture,
@@ -577,15 +577,15 @@ public sealed class MatrixMindCanvas : FrameworkElement
             }
             else if (_particles.Count == 0 && string.IsNullOrEmpty(_forming))
             {
-                status = "◈ MAIN BRAIN · dzīva sistēma";
+                status = "◈ MAIN BRAIN · cyber pink";
             }
         }
 
         if (!string.IsNullOrWhiteSpace(status))
         {
             var sb = new SolidColorBrush(Color.FromArgb(
-                (byte)(IsThinking ? 200 + 40 * Math.Sin(_pulse) : 140),
-                0, 255, 136));
+                (byte)(IsThinking ? 200 + 40 * Math.Sin(_pulse) : 160),
+                255, 46, 203));
             var st = new FormattedText(
                 status,
                 CultureInfo.GetCultureInfo("lv-LV"),
