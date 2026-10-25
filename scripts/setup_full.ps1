@@ -46,20 +46,31 @@ if (-not $SkipModels) {
     $bootArgs += @("-DownloadModels", "-ModelProfile", $ModelProfile)
 }
 & powershell @bootArgs
-if ($LASTEXITCODE -ne 0) { Warn "Bootstrap reported exit $LASTEXITCODE - continuing if tools exist" }
+if ($LASTEXITCODE -ne 0) {
+    Fail "Bootstrap failed with exit $LASTEXITCODE. Fix errors above, then re-run START_MAINBRAIN.bat"
+}
+
+# Refresh PATH for this process (.NET / Python may have been just installed)
+$env:PATH = "$env:LOCALAPPDATA\dotnet;$env:ProgramFiles\dotnet;" +
+    [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" +
+    [System.Environment]::GetEnvironmentVariable("PATH", "User")
+if ($env:LOCALAPPDATA -and (Test-Path (Join-Path $env:LOCALAPPDATA "dotnet\dotnet.exe"))) {
+    $env:DOTNET_ROOT = Join-Path $env:LOCALAPPDATA "dotnet"
+}
 
 # 2) llama-server
 Step "2/5 Install llama-server"
 if (Test-Path $llamaInstall) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File $llamaInstall -AcceptDownloads
+    if ($LASTEXITCODE -ne 0) { Fail "llama-server install failed" }
 } else {
-    Warn "install_llama_server.ps1 missing"
+    Fail "install_llama_server.ps1 missing"
 }
 
 # 3) Build MainBrain.exe release
 Step "3/5 Build MainBrain.exe"
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
-    Fail "dotnet not found after bootstrap. Install .NET 8 SDK and re-run."
+    Fail "dotnet not found after bootstrap. Install .NET 8 SDK from https://dotnet.microsoft.com/download/dotnet/8.0 and re-run."
 }
 & powershell -NoProfile -ExecutionPolicy Bypass -File $build
 if ($LASTEXITCODE -ne 0) { Fail "build_release.ps1 failed" }

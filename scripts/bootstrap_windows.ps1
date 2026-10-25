@@ -110,32 +110,62 @@ if (Test-Command "winget") {
 
 # --- .NET 8 SDK ---
 Write-Step ".NET 8 SDK"
-$dotnetOk = $false
-if (Test-Command "dotnet") {
-    $ver = (& dotnet --version) 2>$null
-    if ($ver -match '^8\.') {
-        Write-Ok "dotnet $ver"
-        $dotnetOk = $true
-    } else {
-        Write-Warn "Atrasts dotnet $ver (ieteicams 8.x). Mēģinās uzstādīt .NET 8 SDK."
+function Refresh-Path {
+    $machine = [System.Environment]::GetEnvironmentVariable("PATH", "Machine")
+    $user = [System.Environment]::GetEnvironmentVariable("PATH", "User")
+    $extra = @(
+        "$env:LOCALAPPDATA\dotnet",
+        "$env:ProgramFiles\dotnet",
+        "${env:ProgramFiles(x86)}\dotnet"
+    ) -join ";"
+    $env:PATH = "$extra;$machine;$user"
+}
+function Test-Dotnet8 {
+    Refresh-Path
+    if (-not (Test-Command "dotnet")) { return $false }
+    try {
+        $ver = (& dotnet --version) 2>$null
+        if ($ver -match '^8\.') {
+            Write-Ok "dotnet $ver"
+            return $true
+        }
+        Write-Warn "Found dotnet $ver (need 8.x SDK)"
+        return $false
+    } catch {
+        Write-Warn "dotnet present but broken: $_"
+        return $false
     }
 }
+
+$dotnetOk = Test-Dotnet8
 if (-not $dotnetOk) {
-    $installed = Install-WithWinget "Microsoft.DotNet.SDK.8" ".NET 8 SDK"
-    if (-not $installed) {
-        $dotnetInstall = Join-Path $cache "dotnet-install.ps1"
-        Invoke-Download "https://dot.net/v1/dotnet-install.ps1" $dotnetInstall
-        & powershell -NoProfile -ExecutionPolicy Bypass -File $dotnetInstall -Channel 8.0 -InstallDir "$env:LOCALAPPDATA\dotnet"
-        $env:PATH = "$env:LOCALAPPDATA\dotnet;$env:PATH"
-        if (-not (Test-Command "dotnet")) {
-            Write-Err "dotnet joprojām nav pieejams. Instalējiet manuāli: https://dotnet.microsoft.com/download/dotnet/8.0"
-            exit 1
-        }
+    Write-Host "Installing .NET 8 SDK..."
+    $null = Install-WithWinget "Microsoft.DotNet.SDK.8" ".NET 8 SDK"
+    Refresh-Path
+    $dotnetOk = Test-Dotnet8
+}
+if (-not $dotnetOk) {
+    # Official install script into LOCALAPPDATA (no admin required)
+    $dotnetInstall = Join-Path $cache "dotnet-install.ps1"
+    Invoke-Download "https://dot.net/v1/dotnet-install.ps1" $dotnetInstall
+    $dotnetRoot = Join-Path $env:LOCALAPPDATA "dotnet"
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $dotnetInstall -Channel 8.0 -InstallDir $dotnetRoot
+    $env:DOTNET_ROOT = $dotnetRoot
+    $env:PATH = "$dotnetRoot;$env:PATH"
+    # Persist user PATH so later shells find it
+    $userPath = [System.Environment]::GetEnvironmentVariable("PATH", "User")
+    if ($userPath -notlike "*$dotnetRoot*") {
+        [System.Environment]::SetEnvironmentVariable("PATH", "$dotnetRoot;$userPath", "User")
     }
-    # atsvaidzina PATH no machine/user
-    $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" +
-                [System.Environment]::GetEnvironmentVariable("PATH", "User")
-    Write-Ok "dotnet: $((dotnet --version) 2>$null)"
+    [System.Environment]::SetEnvironmentVariable("DOTNET_ROOT", $dotnetRoot, "User")
+    Refresh-Path
+    $dotnetOk = Test-Dotnet8
+}
+if (-not $dotnetOk) {
+    Write-Err "No .NET 8 SDK. Install manually then re-run:"
+    Write-Host "  https://dotnet.microsoft.com/download/dotnet/8.0"
+    Write-Host "Choose: SDK 8.x Windows x64"
+    exit 1
 }
 
 # --- Python 3.12/3.13 ONLY (3.14 breaks pydantic/orjson wheels) ---

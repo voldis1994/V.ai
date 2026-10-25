@@ -1,8 +1,7 @@
 ﻿#Requires -Version 5.1
-<#
-.SYNOPSIS
-  Lejupielādē un uzstāda llama.cpp `llama-server` Windows x64 (primārā Main Brain OS inference).
-#>
+# Download llama.cpp llama-server for Windows x64 (PRIMARY Main Brain OS AI).
+# NOTE: GitHub /releases/latest on this repo can point to a stub tag (v0.7.0)
+# without binaries - we scan recent releases for win-cpu-x64.zip instead.
 param(
     [switch]$AcceptDownloads,
     [string]$InstallDir = ""
@@ -13,8 +12,8 @@ $ErrorActionPreference = "Stop"
 
 function Write-Step($m) { Write-Host "`n=== $m ===" -ForegroundColor Cyan }
 function Write-Ok($m) { Write-Host "[OK] $m" -ForegroundColor Green }
-function Write-Warn($m) { Write-Host "[BRĪDINĀJUMS] $m" -ForegroundColor Yellow }
-function Write-Err($m) { Write-Host "[KĻŪDA] $m" -ForegroundColor Red }
+function Write-Warn($m) { Write-Host "[WARN] $m" -ForegroundColor Yellow }
+function Write-Err($m) { Write-Host "[ERROR] $m" -ForegroundColor Red }
 
 if (-not $InstallDir) {
     $InstallDir = Join-Path $env:LOCALAPPDATA "MainBrainOS\llama"
@@ -22,91 +21,107 @@ if (-not $InstallDir) {
 $cache = Join-Path $env:LOCALAPPDATA "MainBrainOS\bootstrap-cache"
 New-Item -ItemType Directory -Force -Path $InstallDir, $cache | Out-Null
 
-Write-Step "llama.cpp llama-server uzstādīšana"
-Write-Host "Mērķis: $InstallDir"
-Write-Host "Šis ir PRIMĀRAIS AI ceļš Main Brain OS (ne Ollama)."
+Write-Step "llama.cpp llama-server install"
+Write-Host "Target: $InstallDir"
+Write-Host "PRIMARY AI path (Ollama NOT required)."
 
 if (-not $AcceptDownloads) {
-    $ans = Read-Host "Lejupielādēt llama-server no GitHub Releases? (J/N)"
-    if ($ans -notmatch '^[jJyY]') { Write-Warn "Atcelts."; exit 0 }
+    $ans = Read-Host "Download llama-server from GitHub Releases? (Y/N)"
+    if ($ans -notmatch '^[yYjJ]') { Write-Warn "Cancelled."; exit 0 }
 }
 
-# Oficiālie llama.cpp release avoti (jaunākais -> vecākais)
-$apiUrls = @(
-    "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest",
-    "https://api.github.com/repos/ggerganov/llama.cpp/releases/latest"
+$headers = @{ "User-Agent" = "MainBrainOS"; "Accept" = "application/vnd.github+json" }
+$apiList = @(
+    "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=30",
+    "https://api.github.com/repos/ggerganov/llama.cpp/releases?per_page=30"
 )
 
-$release = $null
-foreach ($api in $apiUrls) {
+function Select-WinCpuAsset($assets) {
+    $list = @($assets)
+    # Best: official CPU x64 build
+    $a = $list | Where-Object { $_.name -match 'llama-b\d+-bin-win-cpu-x64\.zip$' } | Select-Object -First 1
+    if ($a) { return $a }
+    $a = $list | Where-Object {
+        $_.name -match 'win' -and $_.name -match '\.zip$' -and $_.name -match 'cpu' -and $_.name -match 'x64' -and ($_.name -notmatch 'arm')
+    } | Select-Object -First 1
+    if ($a) { return $a }
+    $a = $list | Where-Object {
+        $_.name -match 'win' -and $_.name -match '\.zip$' -and $_.name -match 'avx2' -and ($_.name -notmatch 'cuda')
+    } | Select-Object -First 1
+    if ($a) { return $a }
+    return ($list | Where-Object {
+        $_.name -match 'win' -and $_.name -match '\.zip$' -and ($_.name -notmatch 'cuda') -and ($_.name -notmatch 'arm')
+    } | Select-Object -First 1)
+}
+
+$chosenRelease = $null
+$preferred = $null
+foreach ($api in $apiList) {
     try {
-        Write-Host "Vaicā: $api"
-        $release = Invoke-RestMethod -Uri $api -Headers @{ "User-Agent" = "MainBrainOS" }
-        if ($release) { break }
+        Write-Host "Query: $api"
+        $releases = Invoke-RestMethod -Uri $api -Headers $headers
+        foreach ($rel in @($releases)) {
+            $asset = Select-WinCpuAsset $rel.assets
+            if ($asset) {
+                $chosenRelease = $rel
+                $preferred = $asset
+                break
+            }
+        }
+        if ($preferred) { break }
     } catch {
-        Write-Warn "Neizdevās: $_"
+        Write-Warn "Failed: $_"
     }
 }
-if (-not $release) {
-    Write-Err "Neizdevās nolasīt llama.cpp releases. Lejupielādējiet manuāli: https://github.com/ggml-org/llama.cpp/releases"
+
+if (-not $preferred) {
+    Write-Err "No Windows llama-server zip found in recent releases."
+    Write-Host "Manual: https://github.com/ggml-org/llama.cpp/releases"
+    Write-Host "Download llama-bXXXX-bin-win-cpu-x64.zip and extract llama-server.exe to:"
+    Write-Host "  $InstallDir"
     exit 1
 }
 
-Write-Ok "Release: $($release.tag_name)"
-
-# Preferē CPU/AVX2 Windows zip (plašāka savietojamība nekā CUDA)
-$assets = @($release.assets)
-$preferred = $assets | Where-Object {
-    $_.name -match 'win' -and $_.name -match '\.zip$' -and (
-        $_.name -match 'avx2' -or $_.name -match 'cpu' -or $_.name -match 'x64'
-    ) -and ($_.name -notmatch 'cuda') -and ($_.name -notmatch 'vulkan')
-} | Select-Object -First 1
-
-if (-not $preferred) {
-    $preferred = $assets | Where-Object { $_.name -match 'win' -and $_.name -match '\.zip$' } | Select-Object -First 1
-}
-if (-not $preferred) {
-    Write-Err "Release nesatur Windows zip. Tag: $($release.tag_name)"
-    Write-Host "Pieejamie asset:"
-    $assets | ForEach-Object { Write-Host "  - $($_.name)" }
-    exit 1
-}
+Write-Ok "Release: $($chosenRelease.tag_name) / $($preferred.name)"
 
 $zipPath = Join-Path $cache $preferred.name
-Write-Host "Lejupielādē: $($preferred.browser_download_url)"
+Write-Host "Downloading: $($preferred.browser_download_url)"
 Invoke-WebRequest -Uri $preferred.browser_download_url -OutFile $zipPath -UseBasicParsing
 
-$extract = Join-Path $cache ("extract-" + $release.tag_name)
+$safeTag = ($chosenRelease.tag_name -replace '[^\w\.-]', '_')
+$extract = Join-Path $cache ("extract-" + $safeTag)
 if (Test-Path $extract) { Remove-Item -Recurse -Force $extract }
 Expand-Archive -Path $zipPath -DestinationPath $extract -Force
 
-# Atrod llama-server.exe
 $server = Get-ChildItem -Path $extract -Recurse -Filter "llama-server.exe" | Select-Object -First 1
 if (-not $server) {
-    # vecāki buildi: server.exe
     $server = Get-ChildItem -Path $extract -Recurse -Filter "server.exe" | Select-Object -First 1
 }
 if (-not $server) {
-    Write-Err "Arhīvā nav llama-server.exe"
+    Write-Err "Archive has no llama-server.exe"
     exit 1
 }
 
-# Kopē visu bināru mapi (DLL blakus)
 $binDir = $server.Directory.FullName
 Copy-Item -Path (Join-Path $binDir "*") -Destination $InstallDir -Recurse -Force
 $finalExe = Join-Path $InstallDir "llama-server.exe"
 if (-not (Test-Path $finalExe)) {
     Copy-Item $server.FullName $finalExe -Force
 }
+if (-not (Test-Path $finalExe)) {
+    Write-Err "Failed to place llama-server.exe in $InstallDir"
+    exit 1
+}
 
 @{
     installed_at = (Get-Date).ToString("o")
-    tag = $release.tag_name
+    tag = $chosenRelease.tag_name
     asset = $preferred.name
     exe = $finalExe
     primary = "llama.cpp"
 } | ConvertTo-Json | Set-Content (Join-Path $InstallDir "install.json") -Encoding UTF8
 
 Write-Ok "llama-server: $finalExe"
-Write-Host "Palaišana: scripts\start_llama_server.ps1"
+Write-Host "Start: scripts\start_llama_server.ps1"
 Write-Host "API: http://127.0.0.1:8080/v1"
+exit 0
