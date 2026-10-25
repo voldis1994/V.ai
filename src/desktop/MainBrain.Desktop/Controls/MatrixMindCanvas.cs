@@ -144,9 +144,9 @@ public sealed class MatrixMindCanvas : FrameworkElement
             return;
         }
 
-        const double fontSize = 18;
-        const double lineHeight = 24;
-        var maxWidth = Math.Min(_size.Width * 0.78, 920);
+        const double fontSize = 20;
+        const double lineHeight = 28;
+        var maxWidth = Math.Min(_size.Width * 0.72, 860);
         var lines = WrapLines(text, maxWidth, fontSize);
         var blockHeight = lines.Count * lineHeight;
         var startY = (_size.Height - blockHeight) / 2.0;
@@ -254,14 +254,15 @@ public sealed class MatrixMindCanvas : FrameworkElement
             return;
         }
 
-        var cols = Math.Max(28, (int)(_size.Width / 16));
+        // Blīvāks cyber-pink lietus (nevis reti izkaisīti simboli)
+        var cols = Math.Max(42, (int)(_size.Width / 12));
         var drops = new List<RainDrop>(cols);
         for (var i = 0; i < cols; i++)
         {
-            drops.Add(NewDrop(i * 16 + _rng.NextDouble() * 4, spawnTop: true));
+            drops.Add(NewDrop(i * 12 + _rng.NextDouble() * 3, spawnTop: true));
         }
 
-        var floaters = new List<Floater>(IsThinking ? 110 : 80);
+        var floaters = new List<Floater>(IsThinking ? 140 : 100);
         for (var i = 0; i < floaters.Capacity; i++)
         {
             floaters.Add(NewFloater());
@@ -276,7 +277,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
 
     private RainDrop NewDrop(double x, bool spawnTop)
     {
-        var len = _rng.Next(10, 26);
+        var len = _rng.Next(14, 32);
         var chars = new char[len];
         for (var i = 0; i < len; i++)
         {
@@ -287,7 +288,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
         {
             X = x,
             Y = spawnTop ? -_rng.Next(0, (int)_size.Height) : -_rng.Next(40, 400),
-            Speed = 3.8 + _rng.NextDouble() * (IsThinking ? 14.0 : 10.0),
+            Speed = 4.2 + _rng.NextDouble() * (IsThinking ? 16.0 : 11.0),
             Chars = chars,
             Head = 0,
         };
@@ -311,7 +312,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
 
     private void ResetDrop(RainDrop d)
     {
-        var len = _rng.Next(10, 26);
+        var len = _rng.Next(14, 32);
         if (d.Chars.Length != len)
         {
             d.Chars = new char[len];
@@ -323,7 +324,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
         }
 
         d.Y = -_rng.Next(0, Math.Max(40, (int)_size.Height / 2));
-        d.Speed = 3.8 + _rng.NextDouble() * (IsThinking ? 14.0 : 10.0);
+        d.Speed = 4.2 + _rng.NextDouble() * (IsThinking ? 16.0 : 11.0);
         d.Head = 0;
     }
 
@@ -463,8 +464,8 @@ public sealed class MatrixMindCanvas : FrameworkElement
         // Cyber pink fons
         dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(8, 2, 10)), null, new Rect(_size));
 
-        // Lietus (vājāks, kad atbilde ir salidojusi)
-        var rainAlphaScale = _holdingAnswer ? 0.35 : (IsThinking ? 1.15 : 0.85);
+        // Lietus — blīvs fons; pie atbildes nedaudz pieklusināts, bet joprojām redzams
+        var rainAlphaScale = _holdingAnswer ? 0.55 : (IsThinking ? 1.2 : 0.95);
         var dropCount = _drops.Count;
         for (var di = 0; di < dropCount; di++)
         {
@@ -476,32 +477,32 @@ public sealed class MatrixMindCanvas : FrameworkElement
             var d = _drops[di];
             for (var i = 0; i < d.Chars.Length; i++)
             {
-                var y = d.Y - i * 16;
+                var y = d.Y - i * 14;
                 if (y < -20 || y > _size.Height + 20)
                 {
                     continue;
                 }
 
                 var t = 1.0 - i / (double)Math.Max(1, d.Chars.Length);
-                var pink = (byte)(40 + 200 * t * rainAlphaScale);
-                var a = (byte)Math.Clamp((int)((i == 0 ? 230 : 40 + 170 * t) * rainAlphaScale), 0, 255);
+                var pink = (byte)(50 + 205 * t * rainAlphaScale);
+                var a = (byte)Math.Clamp((int)((i == 0 ? 240 : 50 + 180 * t) * rainAlphaScale), 0, 255);
                 var brush = i == 0
-                    ? new SolidColorBrush(Color.FromArgb(a, 255, 200, 240))
-                    : new SolidColorBrush(Color.FromArgb(a, pink, (byte)(pink * 0.25), (byte)(pink * 0.85)));
+                    ? new SolidColorBrush(Color.FromArgb(a, 255, 210, 245))
+                    : new SolidColorBrush(Color.FromArgb(a, pink, (byte)(pink * 0.22), (byte)(pink * 0.88)));
                 var ft = new FormattedText(
                     d.Chars[i].ToString(),
                     CultureInfo.InvariantCulture,
                     FlowDirection.LeftToRight,
                     _typeface,
-                    14,
+                    13,
                     brush,
                     VisualTreeHelper.GetDpi(this).PixelsPerDip);
                 dc.DrawText(ft, new Point(d.X, y));
             }
         }
 
-        // Lidojošie hieroglifi — cyber pink
-        if (!_holdingAnswer || IsThinking)
+        // Lidojošie hieroglifi — tikai kamēr nav gatavas atbildes
+        if (!_holdingAnswer)
         {
             var floaterCount = _floaters.Count;
             for (var fi = 0; fi < floaterCount; fi++)
@@ -512,7 +513,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
                 }
 
                 var f = _floaters[fi];
-                var alpha = f.Alpha * (_holdingAnswer ? 0.25 : 1.0);
+                var alpha = f.Alpha;
                 if (IsThinking)
                 {
                     alpha = Math.Min(1, alpha + 0.15 + 0.1 * Math.Sin(_pulse + fi));
@@ -533,38 +534,27 @@ public sealed class MatrixMindCanvas : FrameworkElement
             }
         }
 
-        // Salidojušie atbildes simboli
-        for (var i = 0; i < _particles.Count; i++)
+        // Salidošanās animācija — tad tīra, lasāma atbilde panelī
+        if (!_holdingAnswer)
         {
-            var p = _particles[i];
-            var glow = p.Settled ? (byte)255 : (byte)210;
-            var brush = new SolidColorBrush(
-                p.Settled
-                    ? Color.FromArgb(glow, 255, 160, 230)
-                    : Color.FromArgb(220, 255, 46, 203));
-            var ft = new FormattedText(
-                p.Char.ToString(),
-                CultureInfo.InvariantCulture,
-                FlowDirection.LeftToRight,
-                _typeface,
-                p.Size,
-                brush,
-                VisualTreeHelper.GetDpi(this).PixelsPerDip);
-            if (p.Settled)
+            for (var i = 0; i < _particles.Count; i++)
             {
-                var glowBrush = new SolidColorBrush(Color.FromArgb(55, 255, 46, 203));
-                var glowFt = new FormattedText(
+                var p = _particles[i];
+                var brush = new SolidColorBrush(Color.FromArgb(220, 255, 46, 203));
+                var ft = new FormattedText(
                     p.Char.ToString(),
                     CultureInfo.InvariantCulture,
                     FlowDirection.LeftToRight,
                     _typeface,
-                    p.Size + 1.5,
-                    glowBrush,
+                    p.Size,
+                    brush,
                     VisualTreeHelper.GetDpi(this).PixelsPerDip);
-                dc.DrawText(glowFt, new Point(p.X - 0.5, p.Y - 0.5));
+                dc.DrawText(ft, new Point(p.X, p.Y));
             }
-
-            dc.DrawText(ft, new Point(p.X, p.Y));
+        }
+        else if (!string.IsNullOrWhiteSpace(_forming))
+        {
+            DrawReadableAnswer(dc);
         }
 
         // Statuss / «domā…»
@@ -577,7 +567,7 @@ public sealed class MatrixMindCanvas : FrameworkElement
             }
             else if (_particles.Count == 0 && string.IsNullOrEmpty(_forming))
             {
-                status = "◈ MAIN BRAIN · cyber pink";
+                status = "◈ MAIN BRAIN";
             }
         }
 
@@ -596,6 +586,42 @@ public sealed class MatrixMindCanvas : FrameworkElement
                 VisualTreeHelper.GetDpi(this).PixelsPerDip);
             dc.DrawText(st, new Point((_size.Width - st.Width) / 2, 28));
         }
+    }
+
+    private void DrawReadableAnswer(DrawingContext dc)
+    {
+        var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        const double fontSize = 20;
+        var maxWidth = Math.Min(_size.Width * 0.72, 860);
+        var body = new FormattedText(
+            _forming,
+            CultureInfo.GetCultureInfo("lv-LV"),
+            FlowDirection.LeftToRight,
+            _typeface,
+            fontSize,
+            new SolidColorBrush(Color.FromRgb(255, 190, 235)),
+            dpi)
+        {
+            MaxTextWidth = maxWidth,
+            Trimming = TextTrimming.None,
+        };
+
+        var padX = 28.0;
+        var padY = 22.0;
+        var boxW = Math.Min(maxWidth + padX * 2, _size.Width - 48);
+        var boxH = Math.Min(body.Height + padY * 2, _size.Height * 0.7);
+        var boxX = (_size.Width - boxW) / 2.0;
+        var boxY = Math.Max(56, (_size.Height - boxH) / 2.0);
+
+        // Tumšs panelis ar rozā rāmi — atbilde skaidri lasāma
+        var bg = new SolidColorBrush(Color.FromArgb(210, 8, 2, 12));
+        var border = new Pen(new SolidColorBrush(Color.FromArgb(180, 255, 46, 203)), 1.5);
+        dc.DrawRoundedRectangle(bg, border, new Rect(boxX, boxY, boxW, boxH), 8, 8);
+
+        var glow = new SolidColorBrush(Color.FromArgb(40, 255, 46, 203));
+        dc.DrawRoundedRectangle(glow, null, new Rect(boxX - 2, boxY - 2, boxW + 4, boxH + 4), 10, 10);
+
+        dc.DrawText(body, new Point(boxX + padX, boxY + padY));
     }
 
     private sealed class RainDrop

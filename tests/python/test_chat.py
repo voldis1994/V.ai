@@ -107,12 +107,15 @@ def test_meta_ollama_and_learning_without_llm():
     async def run():
         r1 = await svc.chat(ChatRequest(message="Vai tu pats mācies?", session_id="meta1"))
         assert "māc" in r1.reply.lower()
-        assert "ollama" in r1.reply.lower() or "GGUF" in r1.reply or "zināšanu" in r1.reply.lower()
+        assert "atmiņ" in r1.reply.lower() or "saglabā" in r1.reply.lower()
+        # Nedrīkst izmest tehnisko žargonu parastam jautājumam
+        assert "SQLite" not in r1.reply
+        assert "LoRA" not in r1.reply
 
         r2 = await svc.chat(ChatRequest(message="Vai tiek kustināts Ollama?", session_id="meta2"))
         assert "ollama" in r2.reply.lower()
         low = r2.reply.lower()
-        assert "nav" in low or "izslēgt" in low or "neizmanto" in low
+        assert "neizmanto" in low or "netiek" in low or "nav" in low or "izslēgt" in low
 
     asyncio.run(run())
 

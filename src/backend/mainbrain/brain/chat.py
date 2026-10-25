@@ -752,23 +752,29 @@ class ChatService:
         if not (about_learn or about_ollama or about_model):
             return None
         parts: list[str] = []
-        if about_ollama or about_model:
-            parts.append(
-                "Ollama NAV ieslēgta un netiek kustināta. "
-                "Primārā AI ir llama.cpp (llama-server) + lokāls GGUF (piem. Qwen). "
-                "MainBrain startā Ollama ir izslēgta (MAINBRAIN_OLLAMA_ENABLED=false)."
-            )
+        # Parastam lietotājam — cilvēciski, bez tehniskā žargona
         if about_learn:
             parts.append(
-                "Jā — es pats mācos, bet ne pārtrenējot GGUF svarus. "
-                "Katru labu atbildi saglabāju lokālajā zināšanu bāzē (SQLite + FTS) un "
-                "nākamajās sarunās to atkal izmantoju. "
-                "Var arī teikt «iemācies …» — tad apzināti saglabāju tēmu. "
-                "Pilna LoRA/fine-tune apmācība šobrīd nav automātiska."
+                "Jā — es mācos no mūsu sarunām. "
+                "Labās atbildes saglabāju atmiņā un nākamreiz tās izmantoju. "
+                "Ja gribi, lai es īpaši iegaumēju tēmu, saki: «iemācies …»."
             )
-        if about_ollama and not about_learn:
+            # Tehniskās detaļas tikai ja jautā par modeli/GGUF/Ollama
+            if about_model or about_ollama:
+                parts.append(
+                    "(Tehniski: atmiņa ir lokāla zināšanu bāze, ne modeļa svaru pārtrenēšana.)"
+                )
+        if about_ollama and not about_model:
             parts.append(
-                "Ja Task Managerā redzi Ollama — tas ir cits process, Main Brain to neizmanto."
+                "Ollama netiek izmantota. Strādāju ar lokālo modeli datorā (llama-server)."
+            )
+        elif about_model and not about_learn:
+            parts.append(
+                "Strādāju ar lokālo Qwen modeli datorā (llama-server). Ollama ir izslēgta."
+            )
+        elif about_ollama and about_model and not about_learn:
+            parts.append(
+                "Ollama netiek kustināta. Primārais ir lokālais llama-server + modelis datorā."
             )
         return " ".join(parts)
 
