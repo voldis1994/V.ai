@@ -7,7 +7,7 @@ param(
     [string]$ModelPath = "",
     [int]$Port = 8080,
     [string]$HostAddress = "127.0.0.1",
-    [int]$CtxSize = 4096,
+    [int]$CtxSize = 2048,
     [switch]$InstallIfMissing
 )
 
@@ -63,20 +63,45 @@ try {
     }
 } catch {}
 
-$args = @(
+$threads = [Math]::Max(4, [Math]::Min(16, [Environment]::ProcessorCount))
+$argList = @(
     "-m", $ModelPath,
     "--host", $HostAddress,
     "--port", "$Port",
-    "-c", "$CtxSize"
+    "-c", "$CtxSize",
+    "-t", "$threads",
+    "-tb", "$threads",
+    "--prio", "2",
+    "-b", "512",
+    "-ub", "256"
 )
-Start-Process -FilePath $exe -ArgumentList $args -WorkingDirectory $llamaDir -WindowStyle Minimized
+$ngl = $env:MAINBRAIN_N_GPU_LAYERS
+if (-not $ngl) {
+    if ((Test-Path (Join-Path $llamaDir "ggml-cuda.dll")) -or (Test-Path (Join-Path $llamaDir "cudart64_12.dll"))) {
+        $ngl = "99"
+    }
+}
+if ($ngl -and $ngl -ne "0") {
+    $argList += @("-ngl", "$ngl")
+}
+Write-Host "Threads: $threads  Ctx: $CtxSize  ngl: $(if ($ngl) { $ngl } else { 'cpu' })"
+Start-Process -FilePath $exe -ArgumentList $argList -WorkingDirectory $llamaDir -WindowStyle Minimized
 Write-Host "Gaida servera startu..."
 for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Seconds 1
     try {
         $r = Invoke-WebRequest -Uri "http://${HostAddress}:${Port}/v1/models" -UseBasicParsing -TimeoutSec 2
         if ($r.StatusCode -lt 500) {
-            Write-Host "[OK] llama-server gatavs" -ForegroundColor Green
+            Write-Host "[OK] llama-server gatavs — iesildu modeli..." -ForegroundColor Green
+            try {
+                $body = '{"messages":[{"role":"user","content":"hi"}],"max_tokens":4,"temperature":0}'
+                Invoke-WebRequest -Uri "http://${HostAddress}:${Port}/v1/chat/completions" `
+                    -Method POST -Body $body -ContentType "application/json" `
+                    -UseBasicParsing -TimeoutSec 45 | Out-Null
+                Write-Host "[OK] Warmup pabeigts" -ForegroundColor Green
+            } catch {
+                Write-Host "[BRĪDINĀJUMS] Warmup neizdevās (pirmais jautājums var būt lēnāks)" -ForegroundColor Yellow
+            }
             exit 0
         }
     } catch {}

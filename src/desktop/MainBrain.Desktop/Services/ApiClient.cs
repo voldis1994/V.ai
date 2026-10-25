@@ -17,13 +17,22 @@ public sealed class ApiClient
 
     public ApiClient(string baseUrl, string token)
     {
-        _http = new HttpClient { BaseAddress = new Uri(baseUrl) };
+        // Chat + lokālā llama CPU var būt lēna — NEizmantojam .NET noklusējumu 100s
+        _http = new HttpClient
+        {
+            BaseAddress = new Uri(baseUrl),
+            Timeout = TimeSpan.FromMinutes(10),
+        };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
     }
 
     public async Task<HealthResponseDto?> GetHealthAsync()
     {
-        using var client = new HttpClient { BaseAddress = _http.BaseAddress };
+        using var client = new HttpClient
+        {
+            BaseAddress = _http.BaseAddress,
+            Timeout = TimeSpan.FromSeconds(8),
+        };
         return await client.GetFromJsonAsync<HealthResponseDto>("/health", JsonOptions);
     }
 
@@ -42,30 +51,51 @@ public sealed class ApiClient
 
     public async Task<ChatResponseDto> ChatAsync(ChatRequestDto request)
     {
-        var resp = await _http.PostAsJsonAsync("/chat", request, JsonOptions);
-        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+        try
+        {
+            var resp = await _http.PostAsJsonAsync("/chat", request, JsonOptions);
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return new ChatResponseDto
+                {
+                    Reply =
+                        "Backend ir vecs (nav /chat). Aizveriet MainBrain.exe, palaidiet setup_full.ps1 " +
+                        "no jaunākā main, tad atveriet programmu no jauna.",
+                    Mode = "error",
+                };
+            }
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                return new ChatResponseDto
+                {
+                    Reply = $"API kļūda {(int)resp.StatusCode}: {body}",
+                    Mode = "error",
+                };
+            }
+
+            return await resp.Content.ReadFromJsonAsync<ChatResponseDto>(JsonOptions)
+                   ?? new ChatResponseDto { Reply = "(tukša atbilde)" };
+        }
+        catch (TaskCanceledException)
         {
             return new ChatResponseDto
             {
                 Reply =
-                    "Backend ir vecs (nav /chat). Aizveriet MainBrain.exe, palaidiet setup_full.ps1 " +
-                    "no jaunākā main, tad atveriet programmu no jauna.",
+                    "Atbilde aizņēma pārāk ilgu laiku. Lokālais modelis uz CPU ir lēns — " +
+                    "aizver citas programmas un mēģini īsāku jautājumu, vai UPGRADE_MODEL.bat (Q4).",
                 Mode = "error",
             };
         }
-
-        if (!resp.IsSuccessStatusCode)
+        catch (HttpRequestException ex)
         {
-            var body = await resp.Content.ReadAsStringAsync();
             return new ChatResponseDto
             {
-                Reply = $"API kļūda {(int)resp.StatusCode}: {body}",
+                Reply = "Nevaru sasniegt backend: " + ex.Message + ". Palaidiet FIX_BACKEND.bat.",
                 Mode = "error",
             };
         }
-
-        return await resp.Content.ReadFromJsonAsync<ChatResponseDto>(JsonOptions)
-               ?? new ChatResponseDto { Reply = "(tukša atbilde)" };
     }
 
     public async Task StopAsync() => await _http.PostAsync("/control/stop", null);

@@ -290,19 +290,8 @@ public sealed class BackendHost : IDisposable
 
     private void TryStartLlamaServer(string dataDir)
     {
-        try
-        {
-            using var probe = new HttpClient { Timeout = TimeSpan.FromSeconds(1) };
-            var existing = probe.GetAsync("http://127.0.0.1:8080/v1/models").GetAwaiter().GetResult();
-            if ((int)existing.StatusCode < 500)
-            {
-                return;
-            }
-        }
-        catch
-        {
-            // start
-        }
+        // Pārstartē ar ātrajiem argumentiem — vecais process bez -t bremzē visu CPU
+        KillLlamaServers();
 
         var exe = Path.Combine(dataDir, "llama", "llama-server.exe");
         if (!File.Exists(exe))
@@ -316,15 +305,93 @@ public sealed class BackendHost : IDisposable
             return;
         }
 
+        // Pilns CPU: pavedieni + mazāks konteksts = ātrāka interaktīvā atbilde
+        var threads = Math.Clamp(Environment.ProcessorCount, 4, 16);
+        var args = new StringBuilder();
+        args.Append("-m \"").Append(model).Append('"');
+        args.Append(" --host 127.0.0.1 --port 8080");
+        args.Append(" -c 2048");
+        args.Append(" -t ").Append(threads);
+        args.Append(" -tb ").Append(threads);
+        args.Append(" --prio 2");
+        args.Append(" -b 512 -ub 256");
+        // Ja blakus ir CUDA build — mēģina GPU (CPU build ignorē / 0)
+        var ngl = Environment.GetEnvironmentVariable("MAINBRAIN_N_GPU_LAYERS");
+        if (string.IsNullOrWhiteSpace(ngl) &&
+            (File.Exists(Path.Combine(Path.GetDirectoryName(exe)!, "ggml-cuda.dll")) ||
+             File.Exists(Path.Combine(Path.GetDirectoryName(exe)!, "cudart64_12.dll"))))
+        {
+            ngl = "99";
+        }
+
+        if (!string.IsNullOrWhiteSpace(ngl) && ngl != "0")
+        {
+            args.Append(" -ngl ").Append(ngl);
+        }
+
+        Log($"llama-server start: threads={threads} model={Path.GetFileName(model)}");
         var psi = new ProcessStartInfo
         {
             FileName = exe,
-            Arguments = $"-m \"{model}\" --host 127.0.0.1 --port 8080 -c 4096",
+            Arguments = args.ToString(),
             WorkingDirectory = Path.GetDirectoryName(exe)!,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
         _llamaProcess = Process.Start(psi);
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(3000);
+            await WarmupLlamaAsync();
+        });
+    }
+
+    private static void KillLlamaServers()
+    {
+        try
+        {
+            foreach (var name in new[] { "llama-server", "server" })
+            {
+                foreach (var p in Process.GetProcessesByName(name))
+                {
+                    try
+                    {
+                        p.Kill(entireProcessTree: true);
+                        p.WaitForExit(3000);
+                    }
+                    catch
+                    {
+                        // ignore
+                    }
+                    finally
+                    {
+                        p.Dispose();
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private static async Task WarmupLlamaAsync()
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(45) };
+            // Īss pieprasījums — iesilda KV/kernel, lai pirmā īstā atbilde nebūtu 100s
+            using var content = new StringContent(
+                """{"messages":[{"role":"user","content":"hi"}],"max_tokens":4,"temperature":0}""",
+                Encoding.UTF8,
+                "application/json");
+            await client.PostAsync("http://127.0.0.1:8080/v1/chat/completions", content);
+        }
+        catch
+        {
+            // warmup nav obligāts
+        }
     }
 
     private static string? ResolveGguf(string modelsDir)

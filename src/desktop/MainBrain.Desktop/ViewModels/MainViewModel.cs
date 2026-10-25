@@ -314,9 +314,22 @@ public partial class MainViewModel : ObservableObject
             ApplyUiAction(result);
             OnPropertyChanged(nameof(ApprovalsVisibility));
         }
+        catch (TaskCanceledException)
+        {
+            var err =
+                "Modelis neatbildēja laikā. Lokālā AI uz CPU ir lēna — " +
+                "aizver citas programmas un mēģini īsāku jautājumu.";
+            ChatOutput += "\nMain Brain: " + err;
+            FormedAnswer = err;
+            MatrixStatus = "◈ LĒNI";
+        }
         catch (Exception ex)
         {
-            var err = "Kļūda — " + ex.Message;
+            var msg = ex.Message ?? "";
+            var err = msg.Contains("Timeout", StringComparison.OrdinalIgnoreCase) ||
+                      msg.Contains("canceled", StringComparison.OrdinalIgnoreCase)
+                ? "Modelis neatbildēja laikā. Aizver citas programmas un mēģini vēlreiz."
+                : "Kļūda — " + msg;
             ChatOutput += "\nMain Brain: " + err;
             FormedAnswer = err;
             MatrixStatus = "◈ KĻŪDA";

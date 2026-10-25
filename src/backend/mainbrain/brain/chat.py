@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import re
+import time
 from typing import Any
 
 from pathlib import Path
@@ -10,6 +12,10 @@ from mainbrain.brain.intent import Intent, classify_intent, extract_topic, wants
 from mainbrain.contracts.schemas import ChatMessage, ChatRequest, ChatResponse, ModelRole, RunGoalRequest
 from mainbrain.core.ids import utc_now
 from mainbrain.models.router import ModelRouter
+
+# Interaktīvā chata budžets — atgriežam atbildi PIRMS UI HttpClient noklusējuma (100s)
+_CHAT_LLM_BUDGET_SEC = 70.0
+_CHAT_RETRY_BUDGET_SEC = 28.0
 
 
 SYSTEM_CHAT = """Tu esi Main Brain — Windows AI ar piekļuvi VISAM lietotāja datoram un internetam.
@@ -432,82 +438,111 @@ class ChatService:
         history: list[dict[str, str]],
         local_hits: list[str],
     ) -> str:
+        # Īsākas atbildes = ātrāka CPU inference (tokēni × ātrums)
         if intent == Intent.EXPLAIN or intent == Intent.LEARN:
             system = SYSTEM_EXPLAIN
-            max_tokens = 480
+            max_tokens = 280
             role = ModelRole.CODING if self._looks_technical(topic) else ModelRole.REASONING
         elif intent == Intent.SEARCH:
             system = SYSTEM_SEARCH
-            max_tokens = 360
+            max_tokens = 200
             role = ModelRole.REASONING
         else:
             system = SYSTEM_CHAT
-            max_tokens = 220
+            max_tokens = 140
             role = ModelRole.REASONING
 
         context_bits = ""
         if local_hits:
-            joined = "\n- ".join(local_hits[:3])
-            context_bits = f"\n\nLokālās zināšanas:\n- {joined}"
+            joined = "\n- ".join(local_hits[:2])
+            context_bits = f"\n\nKonteksts:\n- {joined}"
 
         if intent == Intent.SEARCH:
             prompt_user = (
                 f"Lietotājs lūdz sameklēt: {user_msg}\n"
                 f"Tēma: {topic}.{context_bits}\n"
-                "Atbildi noderīgi, bez interneta pretīšanām."
+                "Atbildi noderīgi, īsākām teikumiem."
             )
         elif intent in {Intent.EXPLAIN, Intent.LEARN}:
             prompt_user = (
-                f"Izskaidro: {topic}\n"
-                f"Oriģināls jautājums: {user_msg}.{context_bits}"
+                f"Izskaidro īsi: {topic}\n"
+                f"Jautājums: {user_msg}.{context_bits}"
             )
         else:
             prompt_user = user_msg
 
         messages: list[dict[str, str]] = [{"role": "system", "content": system}]
-        # Īsa vēsture + aktuālais prompt
-        for m in history[-4:]:
+        # Minimāla vēsture — mazāks prompt = ātrāka prefills
+        for m in history[-2:]:
             if m["content"] == user_msg and m["role"] == "user":
                 continue
-            messages.append(m)
+            content = m["content"]
+            if len(content) > 400:
+                content = content[:400] + "…"
+            messages.append({"role": m["role"], "content": content})
         messages.append({"role": "user", "content": prompt_user})
 
-        result = await self.models.complete_messages(
-            role=role,
-            messages=messages,
-            temperature=0.25 if intent != Intent.CHAT else 0.2,
-            max_tokens=max_tokens,
-            frequency_penalty=0.55,
-            presence_penalty=0.35,
-            repeat_penalty=1.22,
-            stop=["\nTu:", "\nUser:", "\nuser:", "\nMain Brain:"],
-        )
+        t0 = time.monotonic()
+        try:
+            result = await asyncio.wait_for(
+                self.models.complete_messages(
+                    role=role,
+                    messages=messages,
+                    temperature=0.2,
+                    max_tokens=max_tokens,
+                    frequency_penalty=0.45,
+                    presence_penalty=0.25,
+                    repeat_penalty=1.18,
+                    stop=["\nTu:", "\nUser:", "\nuser:", "\nMain Brain:"],
+                    timeout_sec=_CHAT_LLM_BUDGET_SEC,
+                ),
+                timeout=_CHAT_LLM_BUDGET_SEC + 2.0,
+            )
+        except asyncio.TimeoutError:
+            if local_hits:
+                return "\n".join(local_hits[:3]) + "\n\n(Modelis bija pārāk lēns — rādu lokālo kontekstu.)"
+            return (
+                "Modelis neatbildēja laikā (CPU pārāk noslogots). "
+                "Aizver smagas programmas un mēģini vēlreiz, vai UPGRADE_MODEL.bat (ātrāks Q4)."
+            )
 
         reply = ""
         if result.get("ok") and (result.get("text") or "").strip():
             reply = _clean_reply(str(result["text"]))
         else:
             err = str(result.get("error") or "Lokālais modelis nav pieejams")
+            if local_hits:
+                return "\n".join(local_hits[:3]) + f"\n\n(Modelis: {err})"
             return (
-                f"Modelis neatbild ({err}). "
-                "Ja atbildes ir vājas — lejupielādē capable profilu (7B): UPGRADE_MODEL.bat"
+                f"{err} "
+                "Ja atbildes ir vājas — UPGRADE_MODEL.bat (3B/7B Q4)."
             )
 
-        if _is_junk(reply):
-            retry = await self.models.complete_messages(
-                role=role,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "Atbildi latviešu valodā skaidri, bez atkārtojumiem. Ja nezini — «Nezinu.»",
-                    },
-                    {"role": "user", "content": prompt_user},
-                ],
-                temperature=0.05,
-                max_tokens=min(200, max_tokens),
-                frequency_penalty=0.8,
-                repeat_penalty=1.35,
-            )
+        elapsed = time.monotonic() - t0
+        # Otrais LLM mēģinājums TIKAI ja vēl ir budžets — citādi UI timeout
+        if _is_junk(reply) and elapsed < _CHAT_RETRY_BUDGET_SEC:
+            remain = max(12.0, _CHAT_LLM_BUDGET_SEC - elapsed - 2.0)
+            try:
+                retry = await asyncio.wait_for(
+                    self.models.complete_messages(
+                        role=role,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "Atbildi latviešu valodā skaidri un īsākām. Ja nezini — «Nezinu.»",
+                            },
+                            {"role": "user", "content": prompt_user},
+                        ],
+                        temperature=0.05,
+                        max_tokens=min(120, max_tokens),
+                        frequency_penalty=0.7,
+                        repeat_penalty=1.3,
+                        timeout_sec=remain,
+                    ),
+                    timeout=remain + 1.0,
+                )
+            except asyncio.TimeoutError:
+                retry = {"ok": False}
             if retry.get("ok") and (retry.get("text") or "").strip():
                 reply = _clean_reply(str(retry["text"]))
             if _is_junk(reply):
@@ -517,6 +552,13 @@ class ChatService:
                     f"Nezinu drošu atbildi par «{topic}». "
                     "Mēģini vēlreiz vai UPGRADE_MODEL.bat (3B/7B) labākai saprašanai."
                 )
+        elif _is_junk(reply):
+            if local_hits:
+                return "\n".join(local_hits[:4])
+            return (
+                f"Modelis iedeva neskaidru atbildi par «{topic}». "
+                "Mēģini vēlreiz īsāku jautājumu."
+            )
 
         if intent in {Intent.SEARCH, Intent.PERSON} and local_hits:
             reply = f"[Avoti: {len(local_hits)}]\n{reply}"
@@ -558,11 +600,14 @@ class ChatService:
         try:
             from mainbrain.tools.web import format_search_for_llm, web_search
 
-            payload = await web_search(query, max_results=5)
+            # Īss timeout — meklēšana nedrīkst apēst visu chat budžetu
+            payload = await asyncio.wait_for(web_search(query, max_results=4), timeout=12.0)
             text = format_search_for_llm(payload)
             if not payload.get("ok") and not payload.get("results"):
                 return []
             return [text]
+        except asyncio.TimeoutError:
+            return []
         except Exception as exc:  # noqa: BLE001
             return [f"(Interneta meklēšana neizdevās: {exc})"]
 

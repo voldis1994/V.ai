@@ -63,6 +63,12 @@ class ModelRouter:
         ollama_ok, ollama_detail = (False, "Ollama rezerve izslēgta (MAINBRAIN_OLLAMA_ENABLED=false)")
         if self.settings.ollama_enabled:
             ollama_ok, ollama_detail = await self._probe_ollama(self.settings.ollama_base_url)
+        # NEBLOĶĒ chat ar 4× pilnu inference probe — pietiek ar /v1/models.
+        # Pilna inference pārbaude tikai reizi (cache) un ar īsu timeout.
+        llama_infer = (llama_ok, "server OK (bez inference probe)")
+        ollama_infer = (ollama_ok, "tags OK")
+        if llama_ok and force:
+            llama_infer = await self._probe_inference_openai(self.settings.llama_base_url)
         for role in (ModelRole.REASONING, ModelRole.CODING, ModelRole.VISION, ModelRole.EMBEDDING):
             mapped = self._role_models.get(role)
             provider = None
@@ -73,22 +79,21 @@ class ModelRouter:
             if mapped and llama_ok:
                 provider = "llama.cpp"
                 base = self.settings.llama_base_url
-                probe = await self._probe_inference_openai(base)
-                available = probe[0]
-                details = f"GGUF: {mapped['name']}; {llama_detail}; inference={probe[1]}"
+                available = llama_infer[0]
+                details = f"GGUF: {mapped['name']}; {llama_detail}; inference={llama_infer[1]}"
             elif llama_ok and not mapped and role == ModelRole.REASONING:
                 provider = "llama.cpp"
                 base = self.settings.llama_base_url
-                probe = await self._probe_inference_openai(base)
-                available = probe[0]
-                details = f"llama-server aktīvs; inference={probe[1]}"
+                available = llama_infer[0]
+                details = f"llama-server aktīvs; inference={llama_infer[1]}"
             elif mapped and self.settings.ollama_enabled and ollama_ok:
                 # 2) Tikai skaidri ieslēgta Ollama rezerve
                 provider = "ollama"
                 base = self.settings.ollama_base_url
-                probe = await self._probe_inference_ollama(base, mapped["name"])
-                available = probe[0]
-                details = f"REZERVE Ollama: {mapped['name']}; {ollama_detail}; inference={probe[1]}"
+                if force:
+                    ollama_infer = await self._probe_inference_ollama(base, mapped["name"])
+                available = ollama_infer[0]
+                details = f"REZERVE Ollama: {mapped['name']}; {ollama_detail}; inference={ollama_infer[1]}"
             elif not mapped:
                 details = (
                     "Nav GGUF šai lomai. Ievietojiet modeli models mapē un palaidiet llama-server. "
@@ -145,6 +150,7 @@ class ModelRouter:
         presence_penalty: float = 0.0,
         repeat_penalty: float = 1.0,
         stop: list[str] | None = None,
+        timeout_sec: float = 75.0,
     ) -> dict[str, Any]:
         """OpenAI-style multi-turn chat (pareiza Qwen/llama-server saruna)."""
         if role == ModelRole.NONE:
@@ -161,6 +167,7 @@ class ModelRouter:
                 presence_penalty=presence_penalty,
                 repeat_penalty=repeat_penalty,
                 stop=stop,
+                timeout_sec=timeout_sec,
             )
         if self.settings.ollama_enabled:
             ollama_ok, _ = await self._probe_ollama(self.settings.ollama_base_url)
@@ -207,9 +214,10 @@ class ModelRouter:
         try:
             result = await self._chat_openai(
                 base_url,
-                [{"role": "user", "content": "Atbildi ar vienu vārdu: OK"}],
+                [{"role": "user", "content": "OK"}],
                 temperature=0.0,
-                max_tokens=8,
+                max_tokens=4,
+                timeout_sec=15.0,
             )
             if result.get("ok") and str(result.get("text") or "").strip():
                 return True, "īsa inference OK"
@@ -222,7 +230,8 @@ class ModelRouter:
             result = await self._chat_ollama(
                 base_url,
                 model,
-                [{"role": "user", "content": "Atbildi ar vienu vārdu: OK"}],
+                [{"role": "user", "content": "OK"}],
+                timeout_sec=15.0,
             )
             if result.get("ok") and str(result.get("text") or "").strip():
                 return True, "īsa inference OK"
@@ -241,6 +250,7 @@ class ModelRouter:
         presence_penalty: float = 0.0,
         repeat_penalty: float = 1.0,
         stop: list[str] | None = None,
+        timeout_sec: float = 75.0,
     ) -> dict[str, Any]:
         url = base_url.rstrip("/") + "/chat/completions"
         payload: dict[str, Any] = {
@@ -257,27 +267,57 @@ class ModelRouter:
             payload["repeat_penalty"] = repeat_penalty
         if stop:
             payload["stop"] = stop
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            text = data["choices"][0]["message"]["content"]
-            return {"ok": True, "text": text, "provider": "llama.cpp", "raw": data}
+        try:
+            async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                text = data["choices"][0]["message"]["content"]
+                return {"ok": True, "text": text, "provider": "llama.cpp", "raw": data}
+        except httpx.TimeoutException:
+            return {
+                "ok": False,
+                "text": "",
+                "error": (
+                    f"Modelis neatbildēja {int(timeout_sec)}s laikā (CPU inference pārāk lēna). "
+                    "Aizver citas programmas vai UPGRADE_MODEL.bat uz ātrāku Q4 profilu."
+                ),
+                "provider": "llama.cpp",
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "text": "",
+                "error": f"llama-server kļūda: {exc}",
+                "provider": "llama.cpp",
+            }
 
     async def _chat_ollama(
         self,
         base_url: str,
         model: str,
         messages: list[dict[str, str]],
+        *,
+        timeout_sec: float = 75.0,
     ) -> dict[str, Any]:
         url = base_url.rstrip("/") + "/api/chat"
         payload = {"model": model, "messages": messages, "stream": False}
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            text = data.get("message", {}).get("content", "")
-            return {"ok": True, "text": text, "provider": "ollama", "raw": data}
+        try:
+            async with httpx.AsyncClient(timeout=timeout_sec) as client:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                text = data.get("message", {}).get("content", "")
+                return {"ok": True, "text": text, "provider": "ollama", "raw": data}
+        except httpx.TimeoutException:
+            return {
+                "ok": False,
+                "text": "",
+                "error": f"Ollama timeout {int(timeout_sec)}s",
+                "provider": "ollama",
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "text": "", "error": str(exc), "provider": "ollama"}
 
     def assign_model(self, role: ModelRole, path: str) -> None:
         p = Path(path)
