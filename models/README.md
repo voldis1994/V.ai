@@ -53,6 +53,19 @@ Serveris: `%LOCALAPPDATA%\MainBrainOS\llama\llama-server.exe`
 - `*embed*` → embedding  
 - pārējie → reasoning  
 
+## Kamera / sejas / audio (lokāli)
+
+```bat
+scripts\install_sense.ps1
+```
+
+Tad chatā:
+- `ko tu redzi kamerā` — kadrs + sejas noteikšana + audio
+- `izveido sejas atpazīšanas programmu` — `face_camera_app.py`
+- `pasaki sveiki` — Windows SAPI runā
+
+Pilnai ainas «saprašanai» (objekti, teksts) vajag vision GGUF (`moondream` / standard+vision) — Haar sejas ir lokālas un darbojas bez mākoņa.
+
 ## Ollama (rezerve)
 
 ```text
