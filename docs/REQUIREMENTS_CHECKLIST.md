@@ -17,5 +17,7 @@ Statusi: `IEVIESTS` / `TESTĒTS` / `BLOĶĒTS` / `NESTRĀDĀ`
 | UIA/Input/Capture | Īsta implementācija | IEVIESTS / BLOĶĒTS Windows |
 | Desktop Tool Bridge | Named Pipe | IEVIESTS / BLOĶĒTS Windows |
 | WebView2 vadība | BrowserAutomationService | IEVIESTS / BLOĶĒTS Windows |
-| Model inference probe | Īsta īsa atbilde | IEVIESTS / BLOĶĒTS bez servera |
+| Model inference probe | Īsta īsa atbilde caur llama-server | IEVIESTS / BLOĶĒTS bez servera |
+| llama.cpp primāri | Ollama pēc noklusējuma izslēgta | IEVIESTS / TESTĒTS |
+| llama-server instalācija | install/start skripti + BackendHost | IEVIESTS |
 | A–L pieņemšana | Skatīt TEST_REPORT | Daļēji TESTĒTS / daļēji BLOĶĒTS |

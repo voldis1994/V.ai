@@ -189,6 +189,7 @@ public sealed class BackendHost : IDisposable
 
     public void Dispose()
     {
+        try { StopAsync().GetAwaiter().GetResult(); } catch { /* ignore */ }
         _bridge?.Dispose();
         _capture?.Dispose();
         _uia.Dispose();

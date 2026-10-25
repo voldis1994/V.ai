@@ -10,12 +10,15 @@ Veiciet dubultklikšķi:
 START_MAINBRAIN.bat
 ```
 
-Tas lejupielādē un uzstāda .NET 8, Python 3.12+, WebView2 un projekta atkarības (GGUF modeļus — manuāli).
+Tas uzstāda .NET 8, Python 3.12+, WebView2, **llama.cpp `llama-server`** (primārā AI) un projekta atkarības.
+GGUF modeļus — bat izvēlne (opcijas ar modeļiem) vai `scripts\download_models.ps1`.
+**Ollama nav nepieciešama** (tikai rezerve ar `MAINBRAIN_OLLAMA_ENABLED=true`).
 
 ```powershell
 ./scripts/bootstrap_windows.ps1
-# vai
-./scripts/setup_windows.ps1
+./scripts/install_llama_server.ps1
+./scripts/download_models.ps1 -Profile light
+./scripts/start_llama_server.ps1
 ./scripts/start_dev.ps1
 ```
 
