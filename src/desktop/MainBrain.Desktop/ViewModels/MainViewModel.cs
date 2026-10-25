@@ -24,10 +24,17 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _chatOutput = "";
     [ObservableProperty] private string _chatSessionId = "ui";
     [ObservableProperty] private bool _isThinking;
-    /// <summary>Matrix lietus redzams visu laiku, izņemot kad AI atbild.</summary>
+    /// <summary>Immersīvs Matrix režīms — bez pogām (noklusējums).</summary>
+    [ObservableProperty] private bool _immersiveMode = true;
+    /// <summary>Teksts, ko hieroglifi salido centrā.</summary>
+    [ObservableProperty] private string _formedAnswer = "";
+    [ObservableProperty] private string _matrixStatus = "◈ MAIN BRAIN · dzīva sistēma";
+    /// <summary>Vecais karogs — Matrix vairs nepazūd; paliek saderībai.</summary>
     [ObservableProperty] private bool _showMatrixRain = true;
 
-    public Visibility MatrixRainVisibility => ShowMatrixRain ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility MatrixRainVisibility => Visibility.Visible;
+    public Visibility ImmersiveVisibility => ImmersiveMode ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility ChromeVisibility => ImmersiveMode ? Visibility.Collapsed : Visibility.Visible;
     [ObservableProperty] private string _terminalOutput = "";
     [ObservableProperty] private AgentDefinitionDto? _selectedAgent;
     [ObservableProperty] private string _inspectorText = "Izvēlieties aģentu vai palaidiet uzdevumu.";
@@ -147,6 +154,23 @@ public partial class MainViewModel : ObservableObject
     partial void OnShowAgentsChanged(bool value) => OnPropertyChanged(nameof(AgentsVisibility));
     partial void OnShowInspectorChanged(bool value) => OnPropertyChanged(nameof(InspectorVisibility));
     partial void OnShowMatrixRainChanged(bool value) => OnPropertyChanged(nameof(MatrixRainVisibility));
+    partial void OnImmersiveModeChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ImmersiveVisibility));
+        OnPropertyChanged(nameof(ChromeVisibility));
+        if (value)
+        {
+            FocusSource = "home";
+            ShowAgents = false;
+            ShowInspector = false;
+            IsFocusMode = true;
+            MatrixStatus = "◈ MAIN BRAIN · dzīva sistēma";
+        }
+        else
+        {
+            MatrixStatus = "◈ DEV · Ctrl+Shift+D atpakaļ immersīvā";
+        }
+    }
 
     private void NotifyWorkspaceVisibilities()
     {
@@ -170,6 +194,12 @@ public partial class MainViewModel : ObservableObject
         "log" => "Žurnāls",
         _ => source,
     };
+
+    [RelayCommand]
+    private void ToggleImmersive()
+    {
+        ImmersiveMode = !ImmersiveMode;
+    }
 
     [RelayCommand]
     private void SetFocusMode()
@@ -240,8 +270,10 @@ public partial class MainViewModel : ObservableObject
         ChatInput = "";
         ActiveJobs++;
         IsThinking = true;
-        // Matrix pazūd, kamēr AI atbild
-        ShowMatrixRain = false;
+        ShowMatrixRain = true;
+        // Iepriekšējā atbilde izgaist — hieroglifi atkal lido brīvi, tad salido jaunajā
+        FormedAnswer = "";
+        MatrixStatus = "◈ DOMĀ …";
         if (string.IsNullOrWhiteSpace(ChatOutput))
         {
             ChatOutput = $"Tu: {userText}";
@@ -264,44 +296,30 @@ public partial class MainViewModel : ObservableObject
                 SessionId = ChatSessionId,
                 WorkspacePath = string.IsNullOrWhiteSpace(WorkspacePath) ? null : WorkspacePath,
             });
-            ChatOutput += $"\nMain Brain: {result.Reply}";
+            var reply = result.Reply ?? "";
+            ChatOutput += $"\nMain Brain: {reply}";
+            // Hieroglifi salido un izveido atbildi ekrāna centrā
+            FormedAnswer = reply;
+            MatrixStatus = ImmersiveMode ? "" : "◈ ATBILDE";
             if (result.Mode == "execute")
             {
                 TerminalOutput += $"\n[{DateTime.Now:HH:mm:ss}] Izpilde: {result.GoalStatus}";
                 InspectorText = $"Uzdevums: {result.GoalStatus}";
             }
             OnPropertyChanged(nameof(ApprovalsVisibility));
-
-            // Ļaujam typewriter pabeigt, tad Matrix atgriežas
-            var revealMs = Math.Clamp((result.Reply?.Length ?? 20) * 8, 800, 6000);
-            _ = RestoreMatrixAfterAsync(revealMs);
         }
         catch (Exception ex)
         {
-            ChatOutput += "\nMain Brain: Kļūda — " + ex.Message;
-            ShowMatrixRain = true;
+            var err = "Kļūda — " + ex.Message;
+            ChatOutput += "\nMain Brain: " + err;
+            FormedAnswer = err;
+            MatrixStatus = "◈ KĻŪDA";
         }
         finally
         {
             IsThinking = false;
             ActiveJobs = Math.Max(0, ActiveJobs - 1);
             await RefreshApprovalsAsync();
-        }
-    }
-
-    private async Task RestoreMatrixAfterAsync(int delayMs)
-    {
-        try
-        {
-            await Task.Delay(delayMs);
-            if (!IsThinking)
-            {
-                ShowMatrixRain = true;
-            }
-        }
-        catch
-        {
-            ShowMatrixRain = true;
         }
     }
 

@@ -9,49 +9,65 @@
         ResizeMode="NoResize"
         Topmost="True"
         WindowStartupLocation="CenterScreen"
-        Background="#020608"
+        Background="#010406"
         Foreground="{StaticResource TextBrush}"
         KeyDown="Window_OnKeyDown">
   <Grid>
-    <!-- MATRIX: kustas visu laiku; pazūd tikai kad AI atbild -->
-    <ctrl:MatrixRainCanvas x:Name="MatrixBg" Panel.ZIndex="0"
-                           Visibility="{Binding MatrixRainVisibility}"/>
+    <!-- Dzīvā Matrix sistēma — hieroglifi salido atbildē -->
+    <ctrl:MatrixMindCanvas x:Name="Mind"
+                           Panel.ZIndex="0"
+                           AnswerText="{Binding FormedAnswer}"
+                           IsThinking="{Binding IsThinking}"
+                           StatusLine="{Binding MatrixStatus}"/>
 
-    <Grid Panel.ZIndex="1">
+    <!-- Immersīvais režīms: TIKAI jautājuma rinda (bez pogām) -->
+    <DockPanel Panel.ZIndex="2" Visibility="{Binding ImmersiveVisibility}">
+      <Border DockPanel.Dock="Bottom" Background="#AA010406" Padding="24,14,24,22">
+        <DockPanel MaxWidth="920" HorizontalAlignment="Center">
+          <TextBlock DockPanel.Dock="Left" Text="▌" FontFamily="Consolas" FontSize="20"
+                     Foreground="#FF00FF88" VerticalAlignment="Center" Margin="0,0,10,0">
+            <TextBlock.Effect>
+              <DropShadowEffect Color="#00FF88" BlurRadius="12" ShadowDepth="0" Opacity="0.9"/>
+            </TextBlock.Effect>
+          </TextBlock>
+          <TextBox x:Name="ChatBox" Text="{Binding ChatInput, UpdateSourceTrigger=PropertyChanged}"
+                   MinHeight="40" VerticalContentAlignment="Center" FontSize="16" FontFamily="Consolas"
+                   Background="Transparent" Foreground="#FFB7FFD0" BorderThickness="0"
+                   CaretBrush="#FF00FF88" Padding="0,8"
+                   KeyDown="ChatBox_OnKeyDown"/>
+        </DockPanel>
+      </Border>
+      <!-- Tukšs centrs — atbilde dzīvo Matrix canvas -->
+      <Grid/>
+    </DockPanel>
+
+    <!-- Dev chrome: tikai Ctrl+Shift+D (nav redzams parasti) -->
+    <Grid Panel.ZIndex="3" Visibility="{Binding ChromeVisibility}">
       <Grid.RowDefinitions>
-        <RowDefinition Height="48"/>
+        <RowDefinition Height="44"/>
         <RowDefinition Height="*"/>
         <RowDefinition Height="Auto"/>
       </Grid.RowDefinitions>
 
-      <!-- Top HUD -->
-      <Border Grid.Row="0" Background="{StaticResource TaskbarBrush}" BorderBrush="#4400FF88" BorderThickness="0,0,0,1" Padding="14,0">
-        <Border.Effect>
-          <DropShadowEffect Color="#00FF88" BlurRadius="16" ShadowDepth="0" Opacity="0.35"/>
-        </Border.Effect>
+      <Border Grid.Row="0" Background="#EE020608" BorderBrush="#4400FF88" BorderThickness="0,0,0,1" Padding="12,0">
         <Grid>
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <TextBlock Text="◈ MAIN BRAIN" FontWeight="Bold" FontSize="15" Foreground="#FF00FF88" VerticalAlignment="Center">
-              <TextBlock.Effect>
-                <DropShadowEffect Color="#00FF88" BlurRadius="10" ShadowDepth="0" Opacity="0.9"/>
-              </TextBlock.Effect>
-            </TextBlock>
-            <TextBlock Text="{Binding StatusText}" Margin="16,0,0,0" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
-            <TextBlock Text="{Binding ActiveModel}" Margin="12,0,0,0" Foreground="#8800FF88" MaxWidth="260" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-            <TextBlock Text="{Binding ActiveJobs, StringFormat=JOBS:{0}}" Margin="12,0,0,0" VerticalAlignment="Center"/>
-            <TextBlock Text="{Binding AgentCountText}" Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#FF7CFFB2"/>
+            <TextBlock Text="◈ DEV" FontWeight="Bold" Foreground="#FF00FF88" VerticalAlignment="Center"/>
+            <TextBlock Text="{Binding StatusText}" Margin="12,0,0,0" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+            <TextBlock Text="{Binding ActiveModel}" Margin="10,0,0,0" Foreground="#8800FF88" MaxWidth="240" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+            <TextBlock Text="{Binding AgentCountText}" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="#FF7CFFB2"/>
           </StackPanel>
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
             <Button Content="Aģenti" Style="{StaticResource TaskBtn}" Command="{Binding ToggleAgentsCommand}"/>
             <Button Content="Inspektors" Style="{StaticResource TaskBtn}" Command="{Binding ToggleInspectorCommand}"/>
             <Button Content="Focus" Style="{StaticResource TaskBtn}" Command="{Binding SetFocusModeCommand}"/>
             <Button Content="Multi" Style="{StaticResource TaskBtn}" Command="{Binding SetMultiModeCommand}"/>
+            <Button Content="Immersīvs" Style="{StaticResource AccentBtn}" Command="{Binding ToggleImmersiveCommand}"/>
             <Button Content="STOP" Style="{StaticResource DangerBtn}" Command="{Binding EmergencyStopCommand}"/>
           </StackPanel>
         </Grid>
       </Border>
 
-      <!-- Workspace -->
       <Grid Grid.Row="1">
         <Border Width="300" HorizontalAlignment="Left" Background="{StaticResource PanelBrush}"
                 BorderBrush="#4400FF88" BorderThickness="0,0,1,0"
@@ -86,29 +102,7 @@
           </DockPanel>
         </Border>
 
-        <Grid Visibility="{Binding FocusVisibility}">
-          <!-- Chat: caurspīdīgs kad Matrix redzams; skaidrāks kad AI atbild -->
-          <Border Visibility="{Binding HomeVisibility}" Padding="28">
-            <Border.Style>
-              <Style TargetType="Border">
-                <Setter Property="Background" Value="#22010406"/>
-                <Style.Triggers>
-                  <DataTrigger Binding="{Binding ShowMatrixRain}" Value="False">
-                    <Setter Property="Background" Value="#EE020608"/>
-                  </DataTrigger>
-                </Style.Triggers>
-              </Style>
-            </Border.Style>
-            <Border BorderBrush="#4400FF88" BorderThickness="1" Padding="18" MaxWidth="960"
-                    HorizontalAlignment="Center" VerticalAlignment="Center"
-                    Background="#99020408">
-              <Border.Effect>
-                <DropShadowEffect Color="#00FF88" BlurRadius="24" ShadowDepth="0" Opacity="0.35"/>
-              </Border.Effect>
-              <ctrl:MatrixTypewriterBox FullText="{Binding ChatOutput}" FontSize="17" MinHeight="120"/>
-            </Border>
-          </Border>
-
+        <Grid Visibility="{Binding FocusVisibility}" Margin="0,0,0,0">
           <Border Visibility="{Binding BrowserVisibility}" Background="#EE020608">
             <wv2:WebView2 x:Name="Browser" Source="about:blank"/>
           </Border>
@@ -165,8 +159,7 @@
         </Grid>
       </Grid>
 
-      <!-- Bottom console -->
-      <Border Grid.Row="2" Background="{StaticResource TaskbarBrush}" BorderBrush="#4400FF88" BorderThickness="0,1,0,0" Padding="10,8">
+      <Border Grid.Row="2" Background="#EE020608" BorderBrush="#4400FF88" BorderThickness="0,1,0,0" Padding="10,8">
         <DockPanel>
           <Border DockPanel.Dock="Top" Margin="0,0,0,8" Padding="8" Background="#2200FF88" BorderBrush="#4400FF88" BorderThickness="1"
                   Visibility="{Binding ApprovalsVisibility}">
@@ -184,7 +177,6 @@
               </ItemsControl>
             </DockPanel>
           </Border>
-
           <StackPanel DockPanel.Dock="Bottom">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,8">
               <Button Content="Sākums" Style="{StaticResource TaskBtn}" Command="{Binding SelectFocusSourceCommand}" CommandParameter="home"/>
@@ -193,15 +185,14 @@
               <Button Content="Terminālis" Style="{StaticResource TaskBtn}" Command="{Binding SelectFocusSourceCommand}" CommandParameter="terminal"/>
               <Button Content="Dzīvais" Style="{StaticResource TaskBtn}" Command="{Binding SelectFocusSourceCommand}" CommandParameter="live"/>
               <Button Content="Žurnāls" Style="{StaticResource TaskBtn}" Command="{Binding SelectFocusSourceCommand}" CommandParameter="log"/>
-              <Button Content="Fiksēt" Style="{StaticResource TaskBtn}" Command="{Binding ToggleFocusPinCommand}"/>
             </StackPanel>
             <DockPanel>
               <Button DockPanel.Dock="Right" Content="▶ SŪTĪT" Style="{StaticResource AccentBtn}"
                       Command="{Binding SendGoalCommand}" MinWidth="100"/>
-              <TextBox x:Name="ChatBox" Text="{Binding ChatInput, UpdateSourceTrigger=PropertyChanged}"
-                       MinHeight="46" VerticalContentAlignment="Center" FontSize="15" FontFamily="Consolas"
+              <TextBox Text="{Binding ChatInput, UpdateSourceTrigger=PropertyChanged}"
+                       MinHeight="40" VerticalContentAlignment="Center" FontSize="14" FontFamily="Consolas"
                        Background="#AA020608" Foreground="#FFB7FFD0" BorderBrush="#6600FF88" BorderThickness="1"
-                       Padding="14,10" KeyDown="ChatBox_OnKeyDown"/>
+                       Padding="12,8" KeyDown="ChatBox_OnKeyDown"/>
             </DockPanel>
           </StackPanel>
         </DockPanel>

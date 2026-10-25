@@ -38,15 +38,29 @@ public partial class MainWindow : Window
 
     private void Window_OnKeyDown(object sender, KeyEventArgs e)
     {
+        // Ctrl+Shift+D — rāda/slēpj DEV pogas (immersīvajā režīmā nav opciju)
+        if (e.Key == Key.D &&
+            Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift) &&
+            DataContext is MainViewModel vmToggle)
+        {
+            vmToggle.ToggleImmersiveCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.Escape)
         {
-            if (_trueFullscreen)
+            // Esc immersīvā: fokuss uz jautājumu; Chrome režīmā — atpakaļ immersīvā
+            if (DataContext is MainViewModel vm)
             {
-                ExitFullscreen();
-            }
-            else
-            {
-                EnterFullscreen();
+                if (!vm.ImmersiveMode)
+                {
+                    vm.ImmersiveMode = true;
+                }
+                else
+                {
+                    ChatBox?.Focus();
+                }
             }
 
             e.Handled = true;
@@ -89,11 +103,8 @@ public partial class MainWindow : Window
             await App.EnsureBackendAsync();
             var host = App.Backend!;
             App.BrowserAutomation.Attach(Browser);
-            // Multi režīma pārlūks — tā pati sesijas loģika caur tiltu izmanto Focus pārlūku kā primāro
-            // (Multi WebView2 ir vizuāls otrais skats; operācijas iet caur primāro Attach)
             if (BrowserMulti is not null)
             {
-                // Navigācijas sinhronizācija vizuāli
                 Browser.NavigationCompleted += (_, __) =>
                 {
                     try
@@ -111,8 +122,8 @@ public partial class MainWindow : Window
             var vm = new MainViewModel(api);
             DataContext = vm;
             await vm.InitializeAsync();
+            ChatBox?.Focus();
 
-            // Dzīvā attēla ceļa atjauninājums
             vm.PropertyChanged += (_, args) =>
             {
                 if (args.PropertyName == nameof(MainViewModel.LiveImagePath) &&
