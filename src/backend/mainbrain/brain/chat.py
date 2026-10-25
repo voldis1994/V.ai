@@ -14,9 +14,9 @@ from mainbrain.contracts.schemas import ChatMessage, ChatRequest, ChatResponse, 
 from mainbrain.core.ids import utc_now
 from mainbrain.models.router import ModelRouter
 
-# Interaktīvā chata budžets — atgriežam atbildi PIRMS UI HttpClient noklusējuma (100s)
-_CHAT_LLM_BUDGET_SEC = 70.0
-_CHAT_RETRY_BUDGET_SEC = 28.0
+# Īss budžets — darbības (pārlūks/faili) NEDRĪKST gaidīt lēno LLM / Ollama
+_CHAT_LLM_BUDGET_SEC = 22.0
+_CHAT_RETRY_BUDGET_SEC = 0.0  # bez otrā LLM mēģinājuma — ātrums > perfekcija
 
 
 SYSTEM_CHAT = """Tu esi Main Brain — lokāls Windows AI (llama.cpp + GGUF). Ollama NAV ieslēgta.
@@ -160,8 +160,8 @@ class ChatService:
             return self._finish(
                 session,
                 history,
-                "Sveiki! Esmu Main Brain — lokāls AI (llama.cpp + GGUF, bez Ollama). "
-                "Es mācos no mūsu sarunām zināšanu bāzē. Ko darām?",
+                "Sveiki! Esmu Main Brain — brīvs lokāls AI datorā (bez Ollama). "
+                "Saki «sameklē …», «uztaisi …» vai «atver …» — daru uzreiz. Ko darām?",
             )
 
         if intent == Intent.MATH:
@@ -190,77 +190,42 @@ class ChatService:
 
         topic = extract_topic(user_msg)
 
-        # Personas / meklēšana — internets + FIZISKI atver pārlūku
-        if intent in {Intent.PERSON, Intent.SEARCH}:
-            resp = await self._search_and_act(req, session, history, user_msg, topic, intent)
-            if resp.reply and not _is_junk(resp.reply):
-                self._remember(topic, resp.reply, kind="search")
-            return resp
-
-        if intent in {Intent.LEARN, Intent.EXPLAIN}:
-            # Ja «iemācies» + izveido — tas jau ir BUILD; šeit tikai tīra mācīšanās
-            local_hits = self._search_local_knowledge(topic)
-            web_hits: list[str] = []
-            if self._internet_enabled():
-                web_hits = await self._search_web(topic)
-            reply = await self._llm_task(
-                intent=intent,
-                user_msg=user_msg,
-                topic=topic,
-                history=history,
-                local_hits=local_hits + web_hits,
+        # BRĪVAIS REŽĪMS: jautājumi / personas / meklēšana / skaidrojumi
+        # → UZREIZ pārlūks + fakti. NEgaidām Ollama un NEgaidām lēno LLM.
+        if intent in {Intent.PERSON, Intent.SEARCH, Intent.EXPLAIN, Intent.LEARN} or (
+            intent == Intent.CHAT and self._looks_like_question(user_msg)
+        ):
+            return await self._search_and_act(
+                req,
+                session,
+                history,
+                user_msg,
+                topic,
+                intent,
+                learn=intent == Intent.LEARN,
             )
-            if _is_junk(reply):
-                # Neļaujam muļķīgai LLM atbildei — izmantojam faktus / skaidru statusu
-                if web_hits or local_hits:
-                    reply = "\n".join((local_hits + web_hits)[:3])
-                else:
-                    reply = (
-                        f"Apgūstu tēmu «{topic}». "
-                        "Šobrīd maz gatavu faktu — mēģini «sameklē {topic}» vai UPGRADE_MODEL.bat."
-                    ).replace("{topic}", topic)
-            saved = self._remember(
-                topic, reply, kind="learn" if intent == Intent.LEARN else "explain"
-            )
-            if intent == Intent.LEARN:
-                status = (
-                    "[Iemācīts] Saglabāju lokālajā zināšanu bāzē — nākamreiz izmantošu."
-                    if saved
-                    else "[Atmiņa] Šī atbilde jau bija saglabāta vai bija pārāk īsa."
-                )
-                reply = f"{reply}\n\n{status}"
-            return self._finish(session, history, reply)
 
-        # Vispārīgs chat — VIENMĒR atmiņa; jautājumiem arī internets; pēc tam mācās
-        local_hits = self._search_local_knowledge(topic)
-        if not local_hits:
-            local_hits = self._search_local_knowledge(user_msg)
-        web_hits: list[str] = []
-        if self._internet_enabled() and self._looks_like_question(user_msg):
-            web_hits = await self._search_web(topic if topic else user_msg)
+        # Īss chat bez jautājuma — mēģina LLM ātri; ja lēns/nav — skaidra norāde
+        local_hits = self._search_local_knowledge(topic) or self._search_local_knowledge(user_msg)
         reply = await self._llm_task(
             intent=Intent.CHAT,
             user_msg=user_msg,
             topic=topic,
             history=history,
-            local_hits=local_hits + web_hits,
+            local_hits=local_hits,
         )
         if _is_junk(reply):
-            if local_hits or web_hits:
-                reply = "\n".join((local_hits + web_hits)[:3])
+            if local_hits:
+                reply = "\n".join(local_hits[:3])
             else:
                 reply = (
-                    "Nesapratu skaidri. Spied konkrēti:\n"
-                    "• «uztaisi …» — izpildīšu uzdevumu\n"
-                    "• «iemācies …» — saglabāšu zināšanās\n"
-                    "• «sameklē …» — internets + pārlūks\n"
-                    "• «atver notepad» — fiziski atvēršu"
+                    "Labāk tā (es daru UZREIZ, bez Ollama):\n"
+                    "• «sameklē …» — atveru pārlūku + pastāstu\n"
+                    "• «uztaisi …» — izveidoju failu/programmu\n"
+                    "• «atver chrome / notepad» — fiziski atveru"
                 )
-        learned = False
         if reply and not _is_junk(reply):
-            learned = self._remember(topic or user_msg, reply, kind="chat")
-        if learned and self._looks_like_question(user_msg):
-            reply = f"{reply}\n\n〔atmiņa〕 Saglabāju šo atbildi nākamajām reizēm."
+            self._remember(topic or user_msg, reply, kind="chat")
         return self._finish(session, history, reply)
 
     def _actor(self) -> PhysicalActor | None:
@@ -392,12 +357,14 @@ class ChatService:
         user_msg: str,
         topic: str,
         intent: Intent,
+        *,
+        learn: bool = False,
     ) -> ChatResponse:
-        """VIENMĒR: atver pārlūku + meklē + izskaidro. Nekādu «nevaru par personām»."""
+        """UZREIZ: atver pārlūku + fakti. Bez Ollama, bez LLM gaidīšanas."""
         q = (topic if topic else user_msg).strip() or user_msg
         search_q = user_msg if intent == Intent.PERSON else q
 
-        # 1) FIZISKI atver pārlūku PIRMS LLM — lietotājs REDZ meklēšanu
+        # 1) FIZISKI atver pārlūku — lietotājs REDZ darbību uzreiz
         url = duckduckgo_url(search_q)
         actor = self._actor()
         opened: dict[str, Any] | None = None
@@ -408,45 +375,41 @@ class ChatService:
             except Exception as exc:  # noqa: BLE001
                 opened = {"error": str(exc)}
 
-        # 2) Faktiski rezultāti (DDG + Wikipedia) — neatkarīgi no modeļa «bloķēšanas»
+        # 2) Fakti no Wikipedia + DDG — paralēli, ātri (bez LLM / bez Ollama)
         local_hits = self._search_local_knowledge(q)
         web_hits: list[str] = []
         wiki_bits: list[str] = []
         if self._internet_enabled():
-            web_hits = await self._search_web(search_q)
-            wiki_bits = await self._search_wikipedia(search_q)
+            try:
+                web_hits, wiki_bits = await asyncio.wait_for(
+                    asyncio.gather(
+                        self._search_web(search_q),
+                        self._search_wikipedia(search_q),
+                        return_exceptions=False,
+                    ),
+                    timeout=12.0,
+                )
+            except Exception:  # noqa: BLE001
+                web_hits, wiki_bits = [], []
 
-        facts = [h for h in (wiki_bits + web_hits + local_hits) if h and not h.startswith("(")]
-        factual = self._facts_to_reply(q, facts)
-
-        # 3) LLM tikai pārfrāzē FAKTUS — ja atsakās / muļķojas, ņem factual
-        reply = factual
-        if facts:
-            llm_reply = await self._llm_task(
-                intent=Intent.SEARCH,
-                user_msg=user_msg,
-                topic=q,
-                history=history[-2:],
-                local_hits=facts[:4],
-            )
-            if llm_reply and not _is_junk(llm_reply):
-                reply = llm_reply
-        elif not factual:
+        facts = [h for h in (wiki_bits + web_hits + local_hits) if h and not str(h).startswith("(")]
+        reply = self._facts_to_reply(q, facts)
+        if not reply:
             reply = (
-                f"Atvēru interneta meklēšanu pārlūkā par «{q}». "
-                "Rezultāti ielādējas pārlūkā — paskaties logu; ja vajag, pajautā vēlreiz pēc 2 sekundēm."
+                f"Atvēru pārlūkā meklēšanu par «{q}».\n"
+                "Skaties pārlūka logu — tur ir rezultāti. "
+                "(Lokālais modelis netiek gaidīts; Ollama netiek izmantota.)"
             )
 
-        if _is_junk(reply):
-            reply = factual or (
-                f"Atvēru pārlūkā: {url}\n"
-                "Modelis mēģināja atteikties, bet full_access ir ieslēgts — meklēšana ir atvērta."
-            )
-
-        act_note = f"\n\n[Darbība] Atvēru pārlūku un sameklēju → {url}"
+        act_note = f"\n\n[Darbība] Atvēru pārlūku → {url}"
         if isinstance(opened, dict) and opened.get("error"):
-            act_note += f" (bridge: {opened.get('error')}; UI/os.startfile joprojām mēģināja)"
-        self._remember(q, reply, kind="search")
+            act_note += f" ({opened.get('error')})"
+        if learn:
+            self._remember(q, reply, kind="learn")
+            act_note += "\n[Iemācīts] Saglabāju atmiņā."
+        else:
+            self._remember(q, reply, kind="search")
+
         return self._finish(
             session,
             history,

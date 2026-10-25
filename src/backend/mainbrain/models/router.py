@@ -23,6 +23,8 @@ class ModelRouter:
         self._role_models: dict[ModelRole, dict[str, Any]] = {}
         self._health_cache: list[ModelHealth] | None = None
         self._health_cache_at: float = 0.0
+        self._llama_ok_cache: bool | None = None
+        self._llama_ok_at: float = 0.0
         self.scan_models()
 
     def scan_models(self) -> list[dict[str, Any]]:
@@ -152,11 +154,20 @@ class ModelRouter:
         stop: list[str] | None = None,
         timeout_sec: float = 75.0,
     ) -> dict[str, Any]:
-        """OpenAI-style multi-turn chat (pareiza Qwen/llama-server saruna)."""
+        """OpenAI-style multi-turn chat — TIKAI llama.cpp. Ollama NETIEK gaidīta."""
         if role == ModelRole.NONE:
             return {"ok": True, "text": "", "provider": "none"}
-        llama_ok, llama_detail = await self._probe_openai_compatible(self.settings.llama_base_url)
-        mapped = self._role_models.get(role)
+        # Bez katras reizes probe — taisni uz llama-server (Ollama = OFF)
+        import time
+
+        now = time.time()
+        if self._llama_ok_cache is True and (now - self._llama_ok_at) < 45:
+            llama_ok, llama_detail = True, "cache"
+        else:
+            llama_ok, llama_detail = await self._probe_openai_compatible(self.settings.llama_base_url)
+            self._llama_ok_cache = llama_ok
+            self._llama_ok_at = now
+
         if llama_ok:
             return await self._chat_openai(
                 self.settings.llama_base_url,
@@ -169,21 +180,14 @@ class ModelRouter:
                 stop=stop,
                 timeout_sec=timeout_sec,
             )
-        if self.settings.ollama_enabled:
-            ollama_ok, _ = await self._probe_ollama(self.settings.ollama_base_url)
-            if ollama_ok:
-                model_name = (mapped or {}).get("name") or "local"
-                result = await self._chat_ollama(self.settings.ollama_base_url, model_name, messages)
-                result["fallback"] = "ollama"
-                return result
+        # Ollama NEVIS rezerve pēc noklusējuma — lietotājs negrib gaidīt Ollama
         return {
             "ok": False,
             "text": "",
             "error": (
-                "llama-server nav pieejams. Primārā inference ir llama.cpp — "
-                "uzstādiet/palaidiet llama-server ar GGUF (scripts/install_llama_server.ps1, "
-                "scripts/start_llama_server.ps1). "
-                f"Detaļas: {llama_detail}. Mākoņa API netiek izmantots."
+                "llama.cpp llama-server nav pieejams (Ollama netiek izmantota un netiek gaidīta). "
+                "Pārstartē MainBrain / FIX_BACKEND.bat. "
+                f"Detaļas: {llama_detail}"
             ),
             "provider": None,
         }
