@@ -67,15 +67,20 @@ foreach ($p in $plan) {
     Write-Host ("    avots: {0}" -f $p.SourcePage)
 }
 
-# Disk space check
-$drive = (Get-Item $ModelsDir).PSDrive.Name + ":"
-$freeGb = [math]::Round((Get-PSDrive $drive).Free / 1GB, 2)
+# Disk space check (Get-PSDrive wants "C", not "C:")
 $needGb = [math]::Round(($totalMb * 1.15) / 1024, 2)
-Write-Host ""
-Write-Host "Brīvā vieta uz ${drive}: $freeGb GB (nepieciešami vismaz ~$needGb GB)"
-if ($freeGb -lt $needGb) {
-    Write-Err "Nepietiek vietas diskā."
-    exit 1
+try {
+    $driveName = (Get-Item $ModelsDir).PSDrive.Name
+    if (-not $driveName) { $driveName = "C" }
+    $freeGb = [math]::Round((Get-PSDrive -Name $driveName).Free / 1GB, 2)
+    Write-Host ""
+    Write-Host "Free space on ${driveName}: $freeGb GB (need ~$needGb GB)"
+    if ($freeGb -lt $needGb) {
+        Write-Err "Not enough disk space."
+        exit 1
+    }
+} catch {
+    Write-Warn "Could not check free disk space: $_ (continuing)"
 }
 
 if (-not $AcceptDownloads) {
