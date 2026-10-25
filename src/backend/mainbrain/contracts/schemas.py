@@ -288,7 +288,12 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
-    mode: str = "chat"  # chat | execute
+    mode: str = "chat"  # chat | execute | act
     session_id: str = "default"
     goal_status: str | None = None
     messages: list[ChatMessage] = Field(default_factory=list)
+    # Fiziskā UI darbība Desktop klientam
+    ui_action: str | None = None  # open_browser | open_editor | open_path | open_app | none
+    open_url: str | None = None
+    open_path: str | None = None
+    focus: str | None = None  # home | browser | editor | terminal

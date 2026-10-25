@@ -689,33 +689,65 @@ def test_write_report():
         return self._ok(agent, "Ievades statuss", {"executed": [], "blocked": [result.output], "model_note": model_note}, tool_results=[result])
 
     def _application_launcher(self, agent, goal, inputs, model_note):
-        # Linux vidē drošs variants — python -c true nav process.start ar exe
-        status = self._tool(agent, "process.status", {})
-        return self._ok(agent, "Procesu uzskaite", {"pid": None, "status": "listed", "raw": status.output, "model_note": model_note}, tool_results=[status])
+        from mainbrain.brain.actions import PhysicalActor
+
+        actor = PhysicalActor(self.tools)
+        app = str(inputs.get("app") or inputs.get("program") or "").strip()
+        if not app:
+            # mēģina no mērķa teksta
+            app = actor.detect_open_app(goal) or ""
+        if not app:
+            # notepad pēc noklusējuma, ja mērķī minēts teksts
+            g = (goal or "").lower()
+            if "notepad" in g or "tekst" in g:
+                app = "notepad"
+            elif "calc" in g:
+                app = "calc"
+            elif "explorer" in g or "mape" in g:
+                app = "explorer"
+        if not app:
+            status = self._tool(agent, "process.status", {})
+            return self._ok(
+                agent,
+                "Norādi programmu (notepad/calc/explorer/chrome)",
+                {"pid": None, "status": "need_app", "raw": status.output, "model_note": model_note},
+                tool_results=[status],
+            )
+        result = actor.launch_app(app, list(inputs.get("args") or []))
+        return self._ok(
+            agent,
+            f"Programma «{app}» palaista" if result.get("ok") else f"Programmas «{app}» palaišana",
+            {
+                "pid": (result.get("output") or {}).get("pid") if isinstance(result.get("output"), dict) else None,
+                "status": "running" if result.get("ok") else "failed",
+                "program": result.get("program"),
+                "performed": result.get("performed"),
+                "model_note": model_note,
+            },
+        )
 
     # --- Pārlūks ---
     def _browser_operator(self, agent, goal, inputs, model_note):
-        url = inputs.get("url") or "https://example.com"
-        result = self._tool(agent, "browser.navigate", {"url": url})
-        performed = isinstance(result.output, dict) and result.output.get("performed") is True
-        if not performed:
-            return AgentInvokeResult(
-                agent_id=agent.id,
-                ok=False,
-                summary="Pārlūka navigācija nav apstiprināta",
-                outputs={
-                    "final_url": None,
-                    "observations": [result.output],
-                    "model_note": model_note,
-                },
-                tool_results=[result],
-                error=str((result.output or {}).get("message") if isinstance(result.output, dict) else "Nav veikta"),
-            )
+        from mainbrain.brain.actions import PhysicalActor, duckduckgo_url
+
+        actor = PhysicalActor(self.tools)
+        url = inputs.get("url")
+        if not url:
+            q = str(inputs.get("query") or goal or "").strip()
+            url = duckduckgo_url(q) if q else "https://duckduckgo.com/"
+        opened = actor.open_url(str(url))
+        webview_ok = bool((opened.get("webview") or {}).get("ok"))
+        system_ok = bool((opened.get("system_browser") or {}).get("ok"))
+        performed = webview_ok or system_ok
         return self._ok(
             agent,
-            "Pārlūka navigācija",
-            {"final_url": url, "observations": [result.output], "model_note": model_note},
-            tool_results=[result],
+            "Pārlūks atvērts" if performed else "Pārlūka atvēršana daļēji",
+            {
+                "final_url": url,
+                "observations": [opened],
+                "performed": performed,
+                "model_note": model_note,
+            },
         )
 
     def _form_operator(self, agent, goal, inputs, model_note):
@@ -726,6 +758,8 @@ def test_write_report():
         )
 
     def _documentation_researcher(self, agent, goal, inputs, model_note):
+        from mainbrain.brain.actions import PhysicalActor
+
         query = str(inputs.get("query") or goal or "").strip()
         search = self._tool(agent, "web.search", {"query": query, "max_results": 5})
         sources = []
@@ -740,18 +774,26 @@ def test_write_report():
                     }
                 )
             summary = str(search.output.get("abstract") or summary or f"Meklēts: {query}")
+        # FIZISKI atver pārlūku ar vaicājumu
+        actor = PhysicalActor(self.tools)
+        opened = actor.search_and_open(query)
         if not sources:
             sources = [
                 {
                     "title": "DuckDuckGo",
-                    "url": f"https://duckduckgo.com/?q={query}",
-                    "snippet": "Atver meklēšanu pārlūkā",
+                    "url": opened.get("url"),
+                    "snippet": "Atvērts pārlūkā",
                 }
             ]
         return self._ok(
             agent,
-            "Dokumentācijas / interneta kopsavilkums",
-            {"sources": sources, "summary": summary, "model_note": model_note},
+            "Dokumentācija sameklēta un pārlūks atvērts",
+            {
+                "sources": sources,
+                "summary": summary,
+                "browser": opened,
+                "model_note": model_note,
+            },
             tool_results=[search],
         )
 

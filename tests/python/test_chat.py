@@ -41,6 +41,8 @@ def test_intent_search_learn_explain_build():
     # Programmas — BUILD
     assert classify_intent("uztaisi Python failu hello.py") == Intent.BUILD
     assert classify_intent("sameklē un uztaisi kalkulatoru Python") == Intent.BUILD
+    assert classify_intent("atver notepad") == Intent.OPEN
+    assert classify_intent("atver pārlūku") == Intent.OPEN
 
 
 def test_is_junk_detects_gaidis_loop():

@@ -10,8 +10,9 @@ class Intent(str, Enum):
     PERSON = "person"  # privāta persona — neizdomājam
     EXPLAIN = "explain"  # izskaidro / kas ir (koncepts)
     LEARN = "learn"  # iemācies — izskaidro + saglabā zināšanās
-    SEARCH = "search"  # sameklē — lokālā zināšana / godīgs limits
+    SEARCH = "search"  # sameklē — internets + atver pārlūku
     BUILD = "build"  # uztaisi / izveido / uzprogrammē
+    OPEN = "open"  # atver programmu / failu / pārlūku
     CHAT = "chat"
 
 
@@ -53,6 +54,13 @@ _SEARCH_RE = re.compile(
     r"sameklē|sameklēt|meklē|meklēt|atrast|atrod|"
     r"find|search|google|look\s+up|"
     r"informācij[ua]\s+par"
+    r")\b"
+)
+
+_OPEN_RE = re.compile(
+    r"(?i)\b("
+    r"atver|atvērt|open|palaid|palaist|"
+    r"atver\s+pārlūk|open\s+browser|start\s+"
     r")\b"
 )
 
@@ -164,6 +172,12 @@ def classify_intent(text: str, *, force_execute: bool | None = None) -> Intent:
         return Intent.LEARN
     if _EXPLAIN_RE.search(t):
         return Intent.EXPLAIN
+
+    # Atver programmu / pārlūku (ja nav «sameklē» — to jau apstrādā SEARCH)
+    if _OPEN_RE.search(t) and not _SEARCH_RE.search(t):
+        # «atver un uztaisi» = BUILD; tīrs «atver notepad» = OPEN
+        if not re.search(r"(?i)\b(izveido|uztaisi|uzraksti|uzprogrammē)\b", t):
+            return Intent.OPEN
 
     # BUILD — bet «kā uztaisīt…?» ir mācību jautājums
     if force_execute is not False and _BUILD_RE.search(t):

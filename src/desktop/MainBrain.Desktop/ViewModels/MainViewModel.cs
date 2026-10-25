@@ -302,11 +302,14 @@ public partial class MainViewModel : ObservableObject
             // Hieroglifi salido un izveido atbildi ekrāna centrā
             FormedAnswer = reply;
             MatrixStatus = ImmersiveMode ? "" : "◈ ATBILDE";
-            if (result.Mode == "execute")
+            if (result.Mode is "execute" or "act")
             {
-                TerminalOutput += $"\n[{DateTime.Now:HH:mm:ss}] Izpilde: {result.GoalStatus}";
-                InspectorText = $"Uzdevums: {result.GoalStatus}";
+                TerminalOutput += $"\n[{DateTime.Now:HH:mm:ss}] {result.Mode}: {result.GoalStatus ?? result.UiAction}";
+                InspectorText = $"Darbība: {result.UiAction ?? result.GoalStatus}";
             }
+
+            // Fiziska UI: atver pārlūku / redaktoru / failu — lietotājs REDZ
+            ApplyUiAction(result);
             OnPropertyChanged(nameof(ApprovalsVisibility));
         }
         catch (Exception ex)
@@ -321,6 +324,61 @@ public partial class MainViewModel : ObservableObject
             IsThinking = false;
             ActiveJobs = Math.Max(0, ActiveJobs - 1);
             await RefreshApprovalsAsync();
+        }
+    }
+
+    private void ApplyUiAction(ChatResponseDto result)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(result.Focus))
+            {
+                // Īslaicīgi izejam no tīra Matrix, lai rādītu pārlūku/redaktoru
+                if (result.Focus is "browser" or "editor" or "terminal")
+                {
+                    ImmersiveMode = false;
+                    IsFocusMode = true;
+                    FocusSource = result.Focus;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(result.OpenUrl))
+            {
+                BrowserUrl = result.OpenUrl;
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = result.OpenUrl,
+                        UseShellExecute = true,
+                    });
+                }
+                catch
+                {
+                    // backend jau var būt atvēris sistēmas pārlūku
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(result.OpenPath) && File.Exists(result.OpenPath))
+            {
+                EditorText = File.ReadAllText(result.OpenPath);
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = result.OpenPath,
+                        UseShellExecute = true,
+                    });
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+        }
+        catch
+        {
+            // UI darbība nedrīkst nogāzt chatu
         }
     }
 

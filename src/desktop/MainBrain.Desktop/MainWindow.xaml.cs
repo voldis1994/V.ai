@@ -137,6 +137,17 @@ public partial class MainWindow : Window
                     bmp.EndInit();
                     LiveImage.Source = bmp;
                 }
+
+                if (args.PropertyName == nameof(MainViewModel.BrowserUrl) &&
+                    !string.IsNullOrWhiteSpace(vm.BrowserUrl) &&
+                    Browser is not null)
+                {
+                    try
+                    {
+                        Browser.Source = new Uri(vm.BrowserUrl);
+                    }
+                    catch { /* ignore bad url */ }
+                }
             };
         }
         catch (Exception ex)

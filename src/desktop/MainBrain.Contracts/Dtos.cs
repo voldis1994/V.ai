@@ -119,6 +119,10 @@ public sealed class ChatResponseDto
     public string Mode { get; set; } = "chat";
     public string SessionId { get; set; } = "default";
     public string? GoalStatus { get; set; }
+    public string? UiAction { get; set; }
+    public string? OpenUrl { get; set; }
+    public string? OpenPath { get; set; }
+    public string? Focus { get; set; }
 }
 
 public sealed class HealthResponseDto

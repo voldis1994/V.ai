@@ -3,6 +3,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from pathlib import Path
+
+from mainbrain.brain.actions import PhysicalActor, duckduckgo_url
 from mainbrain.brain.intent import Intent, classify_intent, extract_topic, wants_execution
 from mainbrain.contracts.schemas import ChatMessage, ChatRequest, ChatResponse, ModelRole, RunGoalRequest
 from mainbrain.core.ids import utc_now
@@ -117,6 +120,9 @@ class ChatService:
         if intent == Intent.BUILD:
             return await self._execute(req, session, history)
 
+        if intent == Intent.OPEN:
+            return self._physical_open(req, session, history, user_msg)
+
         if intent == Intent.GREET:
             return self._finish(session, history, "Sveiki! Kā varu palīdzēt?")
 
@@ -141,21 +147,17 @@ class ChatService:
 
         topic = extract_topic(user_msg)
 
-        # Personas / meklēšana / mācīšanās — ar internetu
-        if intent in {Intent.PERSON, Intent.SEARCH, Intent.LEARN, Intent.EXPLAIN}:
+        # Personas / meklēšana — internets + FIZISKI atver pārlūku
+        if intent in {Intent.PERSON, Intent.SEARCH}:
+            return await self._search_and_act(req, session, history, user_msg, topic, intent)
+
+        if intent in {Intent.LEARN, Intent.EXPLAIN}:
             local_hits = self._search_local_knowledge(topic)
             web_hits: list[str] = []
             if self._internet_enabled():
-                web_hits = await self._search_web(topic if intent != Intent.PERSON else user_msg)
-            if intent == Intent.PERSON and not web_hits and not local_hits:
-                return self._finish(
-                    session,
-                    history,
-                    "Internets neatdeva drošus rezultātus par šo personu. "
-                    "Mēģini precīzāku vārdu vai «sameklē …».",
-                )
+                web_hits = await self._search_web(topic)
             reply = await self._llm_task(
-                intent=Intent.SEARCH if intent == Intent.PERSON else intent,
+                intent=intent,
                 user_msg=user_msg,
                 topic=topic,
                 history=history,
@@ -175,7 +177,25 @@ class ChatService:
         )
         return self._finish(session, history, reply)
 
-    def _finish(self, session: str, history: list[dict[str, str]], reply: str) -> ChatResponse:
+    def _actor(self) -> PhysicalActor | None:
+        tools = getattr(getattr(self.brain, "runtime", None), "tools", None)
+        if tools is None:
+            return None
+        return PhysicalActor(tools)
+
+    def _finish(
+        self,
+        session: str,
+        history: list[dict[str, str]],
+        reply: str,
+        *,
+        mode: str = "chat",
+        goal_status: str | None = None,
+        ui_action: str | None = None,
+        open_url: str | None = None,
+        open_path: str | None = None,
+        focus: str | None = None,
+    ) -> ChatResponse:
         cleaned: list[dict[str, str]] = []
         for m in history:
             if m["role"] == "assistant" and _is_junk(m["content"]):
@@ -185,9 +205,129 @@ class ChatService:
         history.append({"role": "assistant", "content": reply})
         return ChatResponse(
             reply=reply,
-            mode="chat",
+            mode=mode,
             session_id=session,
+            goal_status=goal_status,
             messages=[ChatMessage(**m) for m in history[-10:]],
+            ui_action=ui_action,
+            open_url=open_url,
+            open_path=open_path,
+            focus=focus,
+        )
+
+    async def _search_and_act(
+        self,
+        req: ChatRequest,
+        session: str,
+        history: list[dict[str, str]],
+        user_msg: str,
+        topic: str,
+        intent: Intent,
+    ) -> ChatResponse:
+        local_hits = self._search_local_knowledge(topic)
+        web_hits: list[str] = []
+        if self._internet_enabled():
+            web_hits = await self._search_web(topic if intent != Intent.PERSON else user_msg)
+
+        # FIZISKI atver pārlūku ar meklēšanu
+        url = duckduckgo_url(topic if topic else user_msg)
+        actor = self._actor()
+        opened = None
+        if actor is not None:
+            try:
+                opened = actor.search_and_open(topic if topic else user_msg)
+                url = str(opened.get("url") or url)
+            except Exception as exc:  # noqa: BLE001
+                opened = {"error": str(exc)}
+
+        reply = await self._llm_task(
+            intent=Intent.SEARCH,
+            user_msg=user_msg,
+            topic=topic,
+            history=history,
+            local_hits=local_hits + web_hits,
+        )
+        if _is_junk(reply) and web_hits:
+            reply = "\n".join(web_hits[:2])
+        if _is_junk(reply):
+            reply = f"Atvēru meklēšanu pārlūkā par «{topic}»."
+
+        act_note = " Atvēru pārlūku un sameklēju." if opened else ""
+        return self._finish(
+            session,
+            history,
+            reply + act_note,
+            mode="act",
+            ui_action="open_browser",
+            open_url=url,
+            focus="browser",
+        )
+
+    def _physical_open(
+        self,
+        req: ChatRequest,
+        session: str,
+        history: list[dict[str, str]],
+        user_msg: str,
+    ) -> ChatResponse:
+        actor = self._actor()
+        if actor is None:
+            return self._finish(session, history, "Rīki nav pieejami — nevaru atvērt programmu.")
+
+        app = actor.detect_open_app(user_msg)
+        # atver pārlūku / URL
+        if re.search(r"(?i)(pārlūk|browser|chrome|edge|firefox|internet)", user_msg) or re.search(
+            r"https?://", user_msg
+        ):
+            m = re.search(r"(https?://\S+)", user_msg)
+            url = m.group(1) if m else "https://duckduckgo.com/"
+            if not m and re.search(r"(?i)meklē|search|samekl", user_msg):
+                url = duckduckgo_url(extract_topic(user_msg))
+            try:
+                actor.open_url(url)
+            except Exception as exc:  # noqa: BLE001
+                return self._finish(session, history, f"Neizdevās atvērt pārlūku: {exc}")
+            return self._finish(
+                session,
+                history,
+                f"Atvēru pārlūku: {url}",
+                mode="act",
+                ui_action="open_browser",
+                open_url=url,
+                focus="browser",
+            )
+
+        if app:
+            result = actor.launch_app(app)
+            ok = bool(result.get("ok") or result.get("performed"))
+            return self._finish(
+                session,
+                history,
+                f"{'Atvēru' if ok else 'Mēģināju atvērt'} programmu «{app}».",
+                mode="act",
+                ui_action="open_app",
+                focus="home",
+            )
+
+        # fails ceļš
+        m = re.search(r"(?i)([a-z]:\\[^\s]+|/[^\s]+|\S+\.(py|txt|md|cs|json))", user_msg)
+        if m:
+            path = m.group(1)
+            actor.open_path(path)
+            return self._finish(
+                session,
+                history,
+                f"Atvēru: {path}",
+                mode="act",
+                ui_action="open_path",
+                open_path=path,
+                focus="editor",
+            )
+
+        return self._finish(
+            session,
+            history,
+            "Norādi ko atvērt — piem.: «atver notepad», «atver pārlūku», «atver chrome».",
         )
 
     async def _llm_task(
@@ -400,34 +540,46 @@ class ChatService:
             parts.append(f"Verifikācija: {passed}." + (f" {notes}" if notes else ""))
 
         arts = list(getattr(result, "artifacts", None) or [])
+        paths: list[str] = []
         if arts:
-            paths = []
             for a in arts[:8]:
                 p = getattr(a, "path", None) or (a.get("path") if isinstance(a, dict) else None)
                 if p:
                     paths.append(str(p))
             if paths:
                 parts.append("Faili:\n- " + "\n- ".join(paths))
-                # Parādi hello.py saturu, ja ir
                 for p in paths:
                     if p.endswith((".py", ".md", ".txt", ".cs")):
                         try:
-                            from pathlib import Path
-
                             text = Path(p).read_text(encoding="utf-8")[:600]
                             parts.append(f"--- {Path(p).name} ---\n{text}")
                         except OSError:
                             pass
                         break
 
+        # FIZISKI atver izveidoto failu (Notepad / noklusējuma programma)
+        open_path = paths[0] if paths else None
+        actor = self._actor()
+        if actor is not None and open_path:
+            try:
+                if open_path.endswith((".py", ".txt", ".md", ".cs", ".json")):
+                    actor.launch_app("notepad", [open_path])
+                else:
+                    actor.open_path(open_path)
+                parts.append(f"Atvēru failu: {open_path}")
+            except Exception as exc:  # noqa: BLE001
+                parts.append(f"(Neizdevās atvērt failu: {exc})")
+
         summary = "\n".join(parts)
-        history.append({"role": "assistant", "content": summary})
-        return ChatResponse(
-            reply=summary,
+        return self._finish(
+            session,
+            history,
+            summary,
             mode="execute",
-            session_id=session,
             goal_status=status,
-            messages=[ChatMessage(**m) for m in history[-10:]],
+            ui_action="open_path" if open_path else "none",
+            open_path=open_path,
+            focus="editor" if open_path else "home",
         )
 
     @staticmethod

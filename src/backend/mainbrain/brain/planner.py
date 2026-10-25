@@ -205,6 +205,39 @@ class AiPlanner:
 
     def _fallback_for(self, goal_text: str) -> PlannedDag:
         text = goal_text.lower()
+        if any(k in text for k in ("samekl", "meklē", "atrast", "google", "search", "informācij")):
+            return PlannedDag(
+                summary="Interneta meklēšana + pārlūka atvēršana",
+                source="fallback_web_search",
+                tasks=[
+                    PlannedTask(
+                        id="t1",
+                        title="Sameklēt internetā un atvērt pārlūku",
+                        description=goal_text,
+                        agent_id="DocumentationResearcher",
+                    ),
+                    PlannedTask(
+                        id="t2",
+                        title="Atvērt rezultātus pārlūkā",
+                        description=goal_text,
+                        agent_id="BrowserOperator",
+                        depends_on=["t1"],
+                    ),
+                ],
+            )
+        if any(k in text for k in ("notepad", "atver", "palaid calc", "explorer", "chrome", "edge")):
+            return PlannedDag(
+                summary="Programmas palaišana",
+                source="fallback_launch_app",
+                tasks=[
+                    PlannedTask(
+                        id="t1",
+                        title="Palaist programmu",
+                        description=goal_text,
+                        agent_id="ApplicationLauncher",
+                    ),
+                ],
+            )
         if "hello" in text or re.search(r"\b\w+\.py\b", text):
             # Vienkāršs Python fails — bez smagas CSV plūsmas
             return PlannedDag(
