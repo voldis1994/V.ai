@@ -22,22 +22,26 @@
 
     <!-- Immersīvais režīms: TIKAI jautājuma rinda (bez pogām) -->
     <DockPanel Panel.ZIndex="2" Visibility="{Binding ImmersiveVisibility}">
-      <Border DockPanel.Dock="Bottom" Background="#AA010406" Padding="24,14,24,22">
-        <DockPanel MaxWidth="920" HorizontalAlignment="Center">
-          <TextBlock DockPanel.Dock="Left" Text="▌" FontFamily="Consolas" FontSize="20"
-                     Foreground="#FF00FF88" VerticalAlignment="Center" Margin="0,0,10,0">
-            <TextBlock.Effect>
-              <DropShadowEffect Color="#00FF88" BlurRadius="12" ShadowDepth="0" Opacity="0.9"/>
-            </TextBlock.Effect>
-          </TextBlock>
-          <TextBox x:Name="ChatBox" Text="{Binding ChatInput, UpdateSourceTrigger=PropertyChanged}"
-                   MinHeight="40" VerticalContentAlignment="Center" FontSize="16" FontFamily="Consolas"
-                   Background="Transparent" Foreground="#FFB7FFD0" BorderThickness="0"
-                   CaretBrush="#FF00FF88" Padding="0,8"
-                   KeyDown="ChatBox_OnKeyDown"/>
-        </DockPanel>
+      <Border DockPanel.Dock="Bottom" Background="#AA010406" Padding="24,10,24,18">
+        <StackPanel MaxWidth="920" HorizontalAlignment="Center">
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Left" Text="▌" FontFamily="Consolas" FontSize="20"
+                       Foreground="#FF00FF88" VerticalAlignment="Center" Margin="0,0,10,0">
+              <TextBlock.Effect>
+                <DropShadowEffect Color="#00FF88" BlurRadius="12" ShadowDepth="0" Opacity="0.9"/>
+              </TextBlock.Effect>
+            </TextBlock>
+            <TextBox x:Name="ChatBox" Text="{Binding ChatInput, UpdateSourceTrigger=PropertyChanged}"
+                     MinHeight="40" VerticalContentAlignment="Center" FontSize="16" FontFamily="Consolas"
+                     Background="Transparent" Foreground="#FFB7FFD0" BorderThickness="0"
+                     CaretBrush="#FF00FF88" Padding="0,8"
+                     KeyDown="ChatBox_OnKeyDown"/>
+          </DockPanel>
+          <TextBlock Text="Enter · jautā   ·   Ctrl+Shift+D · sistēma   ·   F11 · logs"
+                     FontFamily="Consolas" FontSize="11" Foreground="#4400FF88"
+                     HorizontalAlignment="Center" Margin="0,6,0,0"/>
+        </StackPanel>
       </Border>
-      <!-- Tukšs centrs — atbilde dzīvo Matrix canvas -->
       <Grid/>
     </DockPanel>
 
