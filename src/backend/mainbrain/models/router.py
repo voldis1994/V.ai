@@ -139,6 +139,10 @@ class ModelRouter:
         messages: list[dict[str, str]],
         temperature: float = 0.2,
         max_tokens: int = 1024,
+        frequency_penalty: float = 0.0,
+        presence_penalty: float = 0.0,
+        repeat_penalty: float = 1.0,
+        stop: list[str] | None = None,
     ) -> dict[str, Any]:
         """OpenAI-style multi-turn chat (pareiza Qwen/llama-server saruna)."""
         if role == ModelRole.NONE:
@@ -146,7 +150,16 @@ class ModelRouter:
         llama_ok, llama_detail = await self._probe_openai_compatible(self.settings.llama_base_url)
         mapped = self._role_models.get(role)
         if llama_ok:
-            return await self._chat_openai(self.settings.llama_base_url, messages, temperature, max_tokens)
+            return await self._chat_openai(
+                self.settings.llama_base_url,
+                messages,
+                temperature,
+                max_tokens,
+                frequency_penalty=frequency_penalty,
+                presence_penalty=presence_penalty,
+                repeat_penalty=repeat_penalty,
+                stop=stop,
+            )
         if self.settings.ollama_enabled:
             ollama_ok, _ = await self._probe_ollama(self.settings.ollama_base_url)
             if ollama_ok:
@@ -221,13 +234,27 @@ class ModelRouter:
         messages: list[dict[str, str]],
         temperature: float,
         max_tokens: int,
+        *,
+        frequency_penalty: float = 0.0,
+        presence_penalty: float = 0.0,
+        repeat_penalty: float = 1.0,
+        stop: list[str] | None = None,
     ) -> dict[str, Any]:
         url = base_url.rstrip("/") + "/chat/completions"
-        payload = {
+        payload: dict[str, Any] = {
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "stream": False,
         }
+        if frequency_penalty:
+            payload["frequency_penalty"] = frequency_penalty
+        if presence_penalty:
+            payload["presence_penalty"] = presence_penalty
+        if repeat_penalty and repeat_penalty != 1.0:
+            payload["repeat_penalty"] = repeat_penalty
+        if stop:
+            payload["stop"] = stop
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()
