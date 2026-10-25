@@ -42,10 +42,17 @@ Tas automātiski (ar jūsu apstiprinājumu):
 
 ### GGUF AI modeļi
 
-Tos **var** lejupielādēt uzreiz ar skaidru izvēli `START_MAINBRAIN.bat` → **[4]** light vai **[5]** standard  
-(vai `scripts/download_models.ps1`).
+Tos **var** lejupielādēt ar `scripts/download_models.ps1` vai **`UPGRADE_MODEL.bat`**.
 
-Tie **nav** noklusējuma 1. opcijā, jo:
+| Profils | Modelis | Piezīme |
+|---------|---------|---------|
+| `light` | Qwen 1.5B | tikai smoke — **nesaprot** uzdevumus |
+| `standard` | Qwen 3B | minimums «izskaidro / iemācies / uztaisi» |
+| `capable` | Qwen 7B | ieteicams (~10 GB, 16 GB RAM+) |
+
+`light` / 1.5B **nav** derīgs reālai programmu veidošanai. Pēc 1.5B instalācijas palaid `UPGRADE_MODEL.bat`.
+
+Tie **nav** noklusējuma klusā lejupielādē, jo:
 - aizņem ~2–10 GB,
 - ir licences nosacījumi,
 - atkarīgi no RAM/VRAM,
