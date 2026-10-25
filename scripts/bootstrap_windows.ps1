@@ -138,47 +138,20 @@ if (-not $dotnetOk) {
     Write-Ok "dotnet: $((dotnet --version) 2>$null)"
 }
 
-# --- Python 3.12+ ---
-Write-Step "Python 3.12+"
-function Get-PythonExe {
-    foreach ($c in @("py", "python", "python3")) {
-        if (Test-Command $c) {
-            try {
-                if ($c -eq "py") {
-                    $v = & py -3 --version 2>$null
-                    if ($LASTEXITCODE -eq 0) { return @{ Cmd = "py"; Args = @("-3") } }
-                } else {
-                    $v = & $c --version 2>$null
-                    if ($v -match 'Python 3\.(1[2-9]|[2-9][0-9])') {
-                        return @{ Cmd = $c; Args = @() }
-                    }
-                }
-            } catch {}
-        }
-    }
-    return $null
-}
-
-$pyInfo = Get-PythonExe
+# --- Python 3.12/3.13 ONLY (3.14 breaks pydantic/orjson wheels) ---
+Write-Step "Python 3.12 (required; 3.14 NOT supported)"
+. (Join-Path $PSScriptRoot "Find-Python.ps1")
+$pyInfo = Find-SupportedPython
 if (-not $pyInfo) {
-    $ok = Install-WithWinget "Python.Python.3.12" "Python 3.12"
-    if (-not $ok) {
-        $pyInstaller = Join-Path $cache "python-3.12.8-amd64.exe"
-        # Oficiālais python.org Windows x64 installer
-        Invoke-Download "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe" $pyInstaller
-        Write-Host "Instalē Python (per-user, PATH)..."
-        Start-Process -FilePath $pyInstaller -ArgumentList "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_test=0" -Wait
-        $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" +
-                    [System.Environment]::GetEnvironmentVariable("PATH", "User")
-    }
-    $pyInfo = Get-PythonExe
+    Write-Warn "No Python 3.12/3.13 found (Python 3.14 cannot be used). Installing 3.12..."
+    $pyInfo = Install-Python312 -CacheDir $cache
 }
 if (-not $pyInfo) {
-    Write-Err "Python 3.12+ nav atrasts pēc instalācijas. Restartējiet termināli un palaidiet vēlreiz."
+    Write-Err "Python 3.12 was not found after install. Reboot and re-run START_MAINBRAIN.bat"
     exit 1
 }
-& $pyInfo.Cmd @($pyInfo.Args + "--version")
-Write-Ok "Python gatavs"
+Write-Host "Using: $($pyInfo.Exe) $($pyInfo.Args -join ' ') -> Python $($pyInfo.Version)"
+Write-Ok "Python $($pyInfo.Version) OK"
 
 # --- WebView2 ---
 Write-Step "WebView2 Runtime"
@@ -213,28 +186,38 @@ if (Test-Command "git") {
     $null = Install-WithWinget "Git.Git" "Git"
 }
 
-# --- Projekta venv + pip ---
-Write-Step "Python virtuālā vide un atkarības"
-$venvPython = Join-Path $root ".venv\Scripts\python.exe"
-if (-not (Test-Path $venvPython)) {
-    Write-Host "Veido .venv..."
-    if ($pyInfo.Cmd -eq "py") {
-        & py -3 -m venv (Join-Path $root ".venv")
-    } else {
-        & $pyInfo.Cmd -m venv (Join-Path $root ".venv")
+# --- Projekta venv + pip (must be 3.12/3.13) ---
+Write-Step "Python virtual env and dependencies"
+$venvDir = Join-Path $root ".venv"
+$venvPython = Join-Path $venvDir "Scripts\python.exe"
+# Recreate venv if missing or wrong Python version (e.g. was created with 3.14)
+$needVenv = $true
+if (Test-Path $venvPython) {
+    $vv = & $venvPython --version 2>&1 | Out-String
+    if ($vv -match 'Python\s+(3\.12\.|3\.13\.)') { $needVenv = $false }
+    else {
+        Write-Warn "Existing .venv is wrong Python ($vv) - recreating with 3.12"
+        Remove-Item -Recurse -Force $venvDir
     }
 }
+if ($needVenv) {
+    Write-Host "Creating .venv with Python $($pyInfo.Version)..."
+    & $pyInfo.Exe @($pyInfo.Args + @("-m", "venv", $venvDir))
+    if ($LASTEXITCODE -ne 0) { Write-Err "venv create failed"; exit 1 }
+}
 & $venvPython -m pip install -U pip wheel setuptools
+if ($LASTEXITCODE -ne 0) { Write-Err "pip upgrade failed"; exit 1 }
 if (Test-Path (Join-Path $root "pyproject.toml")) {
     if ($IncludeDevTools) {
         & $venvPython -m pip install -e ".[dev]"
     } else {
         & $venvPython -m pip install -e .
     }
+    if ($LASTEXITCODE -ne 0) { Write-Err "pip install project failed"; exit 1 }
 } else {
-    Write-Warn "pyproject.toml nav atrasts - iespējams, neesat repo saknē"
+    Write-Warn "pyproject.toml not found - wrong folder?"
 }
-Write-Ok "Python pakotnes uzstādītas"
+Write-Ok "Python packages installed"
 
 # --- NuGet atjaunošana desktop projektam (ja SDK ir) ---
 Write-Step ".NET projektu atjaunošana"

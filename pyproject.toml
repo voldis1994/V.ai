@@ -7,7 +7,7 @@ name = "mainbrain"
 version = "1.0.0"
 description = "Main Brain OS — lokāls Windows AI vadības centrs"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 license = { text = "MIT" }
 authors = [{ name = "MainBrainOS" }]
 dependencies = [

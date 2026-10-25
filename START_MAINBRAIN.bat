@@ -9,13 +9,14 @@ echo   Main Brain OS - ONE-CLICK FULL SETUP
 echo ============================================
 echo.
 echo This will:
-echo   1) Install .NET 8, Python, WebView2
+echo   1) Install .NET 8, Python 3.12, WebView2
 echo   2) Install llama-server (local AI)
 echo   3) Download GGUF models (~2 GB)
 echo   4) Build MainBrain.exe
 echo   5) Create Desktop shortcut for daily use
 echo   6) Start the app
 echo.
+echo NOTE: Uses Python 3.12 (NOT 3.14 - wheels break on 3.14).
 echo Ollama is NOT required.
 echo.
 echo Press any key to start (or Ctrl+C to cancel)...
