@@ -394,18 +394,22 @@ class ChatService:
         learn: bool = False,
     ) -> ChatResponse:
         """UZREIZ: fakti + saglabā. Desktop PiP jau rāda DDG — NEBLOĶĒJAM ar bridge."""
-        q = (topic if topic else user_msg).strip() or user_msg
-        # PERSON: meklē pēc vārda, nevis visas frāzes ar «sameklē»
-        search_q = q if intent == Intent.PERSON else (topic or user_msg).strip() or user_msg
-        if intent == Intent.PERSON and not q:
-            search_q = user_msg
+        raw_topic = (topic if topic else user_msg).strip() or user_msg
+        q = self._clean_search_topic(raw_topic, user_msg)
+        # PERSON / vārds: meklē tīru vārdu+uzvārdu, ne «izmanto google.com»
+        search_q = q
+        if intent == Intent.PERSON:
+            search_q = q
 
         url = duckduckgo_url(search_q)
         actor = self._actor()
-        # TIKAI Desktop PiP — NEATVERAM ārējo Chrome/Edge (lietotājs teica: lapa jāaizver, nevis jauna)
+        # TIKAI Desktop PiP — NEATVERAM ārējo Chrome/Edge
         opened: dict[str, Any] = {"url": url, "pip": "desktop-only"}
 
-        local_hits = self._search_local_knowledge(q) or self._search_local_knowledge(search_q)
+        # PERSON: lokālā atmiņa bieži piesārņota ar veciem hello.py — prioritāte = internets
+        local_hits = self._search_local_knowledge(
+            q, for_person=(intent == Intent.PERSON)
+        )
         web_hits: list[str] = []
         wiki_bits: list[str] = []
         if self._internet_enabled():
@@ -424,10 +428,15 @@ class ChatService:
             except Exception:  # noqa: BLE001
                 web_hits, wiki_bits = [], []
 
+        # Internets PIRMS lokālās atmiņas — lai hello.py neaizēno LinkedIn
         facts = [
             h
             for h in (wiki_bits + web_hits + local_hits)
-            if h and not str(h).startswith("(") and not _is_junk(str(h)) and not self._is_noise_fact(str(h))
+            if h
+            and not str(h).startswith("(")
+            and not _is_junk(str(h))
+            and not self._is_noise_fact(str(h))
+            and not self._looks_like_build_log(str(h))
         ]
         spoken = self._facts_to_reply(q or search_q, facts)
         if not spoken:
@@ -529,8 +538,29 @@ class ChatService:
             "privātuma",
             "atbilst noteikumiem",
             "vaicājums:",
+            "veidoju mapi",
+            "rakstu failu",
+            "taisu python",
+            "hello, world",
+            "write python code",
+            "making python script",
+            "atvēru redaktorā",
+            "skaties logu",
         )
         return any(b in t for b in bad)
+
+    @staticmethod
+    def _clean_search_topic(topic: str, user_msg: str) -> str:
+        """«Voldis Sidorovs izmanto google.com» → «Voldis Sidorovs»."""
+        t = (topic or user_msg or "").strip()
+        t = re.sub(
+            r"(?i)\s*(izmantojot|izmanto|using|via|caur)\s+(google|bing|duckduckgo|internetu?|pārlūku)(\.com)?\s*$",
+            "",
+            t,
+        ).strip()
+        t = re.sub(r"(?i)\s+https?://\S+", "", t).strip()
+        t = re.sub(r"(?i)\s+(google|bing)\.com\s*$", "", t).strip()
+        return t or topic or user_msg
 
     @staticmethod
     def _facts_to_reply(topic: str, facts: list[str]) -> str:
@@ -888,20 +918,75 @@ class ChatService:
                 return bool(getattr(tools.policy, "full_access", True))
         return True
 
-    def _search_local_knowledge(self, topic: str) -> list[str]:
+    def _search_local_knowledge(self, topic: str, *, for_person: bool = False) -> list[str]:
+        """Lokālā atmiņa — TIKAI ja saturs patiešām par tēmu (ne hello.py no iepriekšējā uzdevuma)."""
         store = getattr(self.brain, "store", None)
         if store is None or not topic.strip():
             return []
         try:
-            rows = store.search_knowledge(topic, limit=5)
+            rows = store.search_knowledge(topic, limit=8)
         except Exception:  # noqa: BLE001 — FTS var mest uz dīvainiem vaicājumiem
             return []
+        keys = self._topic_keywords(topic)
         out: list[str] = []
         for row in rows or []:
+            source = str(row.get("source") or "")
+            # Izpildes / build žurnāli NEDRĪKST kļūt par «faktiem» par cilvēku
+            if source.startswith(("execute:", "build:")):
+                continue
             content = str(row.get("content") or "").strip()
-            if content:
-                out.append(content[:400])
+            if not content or _is_junk(content) or self._is_noise_fact(content):
+                continue
+            if self._looks_like_build_log(content):
+                continue
+            if for_person and not self._content_mentions_topic(content, keys):
+                continue
+            if keys and not self._content_mentions_topic(content, keys):
+                # FTS OR režīms bieži atgriež nejaušus hitus («google», «com»)
+                continue
+            out.append(content[:400])
+            if len(out) >= 3:
+                break
         return out
+
+    @staticmethod
+    def _topic_keywords(topic: str) -> list[str]:
+        stop = {
+            "kas", "ir", "par", "the", "and", "for", "with", "using", "izmanto", "google",
+            "com", "http", "https", "www", "sameklē", "meklē", "info", "informācija",
+            "personu", "persona", "cilvēku", "man", "mani", "audio", "pasaki",
+        }
+        words = re.findall(r"[A-Za-zĀČĒĢĪĶĻŅŠŪŽāčēģīķļņšūž0-9]{3,}", topic or "", flags=re.UNICODE)
+        return [w for w in words if w.lower() not in stop]
+
+    @staticmethod
+    def _content_mentions_topic(content: str, keys: list[str]) -> bool:
+        if not keys:
+            return False
+        low = content.lower()
+        # Vismaz viens «īstais» atslēgvārds (vārds/uzvārds), nevis google/com
+        strong = [k for k in keys if len(k) >= 4]
+        pool = strong or keys
+        return any(k.lower() in low for k in pool)
+
+    @staticmethod
+    def _looks_like_build_log(text: str) -> bool:
+        t = (text or "").lower()
+        markers = (
+            "veidoju mapi",
+            "rakstu failu",
+            "hello, world",
+            "hello.py",
+            "taisu python",
+            "uzdevums izpildīts",
+            "print(",
+            "atvēru redaktorā",
+            "vscode",
+            "notepad",
+            "```python",
+        )
+        hits = sum(1 for m in markers if m in t)
+        return hits >= 2
 
     async def _search_web(self, query: str) -> list[str]:
         try:
@@ -909,10 +994,23 @@ class ChatService:
 
             # Īss timeout — meklēšana nedrīkst apēst visu chat budžetu
             payload = await asyncio.wait_for(web_search(query, max_results=4), timeout=12.0)
-            text = format_search_for_llm(payload)
             if not payload.get("ok") and not payload.get("results"):
                 return []
-            return [text]
+            # Atsevišķi snippeti — nevis viens milzīgs «Vaicājums:…» bloks
+            bits: list[str] = []
+            for item in payload.get("results") or []:
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title") or "").strip()
+                snip = str(item.get("snippet") or "").strip()
+                chunk = f"{title}. {snip}".strip(" .")
+                if chunk and not _is_junk(chunk) and not self._is_noise_fact(chunk):
+                    bits.append(chunk[:350])
+            if not bits:
+                text = format_search_for_llm(payload)
+                if text and not text.startswith("("):
+                    bits.append(text[:400])
+            return bits[:4]
         except asyncio.TimeoutError:
             return []
         except Exception as exc:  # noqa: BLE001
@@ -923,10 +1021,15 @@ class ChatService:
         store = getattr(self.brain, "store", None)
         if store is None:
             return False
-        summary = reply.split("\n\n[Iemācīts]")[0].split("\n\n〔atmiņa〕")[0].strip()[:800]
+        # Build/execute žurnālus NEINDEXĒJAM — citādi «hello.py» uzpeld personu meklēšanā
+        if kind in {"execute", "build"}:
+            return False
+        summary = reply.split("\n\n[Iemācīts]")[0].split("\n\n〔atmiņa〕")[0].split("\n\n[Darbība]")[0].strip()[:800]
         if _is_junk(summary) or len(summary) < 24:
             return False
-        topic_key = (topic or "").strip()[:120] or "saruna"
+        if self._looks_like_build_log(summary) or self._is_noise_fact(summary):
+            return False
+        topic_key = self._clean_search_topic((topic or "").strip()[:120], topic or "") or "saruna"
         # Neindexē meta/atkārtotus dublikātus ar to pašu sākumu
         try:
             existing = store.search_knowledge(topic_key, limit=3)
