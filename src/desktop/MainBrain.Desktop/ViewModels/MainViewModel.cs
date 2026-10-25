@@ -26,12 +26,14 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _inspectorText = "Izvēlieties aģentu vai palaidiet uzdevumu.";
     [ObservableProperty] private string _workspacePath = "";
     [ObservableProperty] private string _browserUrl = "https://example.com";
-    [ObservableProperty] private string _currentPanelKind = "Iegultais pārlūks";
-    [ObservableProperty] private string _focusSource = "browser";
+    [ObservableProperty] private string _currentPanelKind = "Sākums — gaida uzdevumu";
+    [ObservableProperty] private string _focusSource = "home";
     [ObservableProperty] private bool _focusPinned;
     [ObservableProperty] private string? _liveImagePath;
     [ObservableProperty] private string _editorText = "# Main Brain OS redaktors\n";
     [ObservableProperty] private string _navSection = "Main Brain";
+    [ObservableProperty] private bool _showAgents;
+    [ObservableProperty] private bool _showInspector;
 
     public ObservableCollection<AgentDefinitionDto> Agents { get; } = new();
     public ObservableCollection<string> Sections { get; } = new();
@@ -45,16 +47,26 @@ public partial class MainViewModel : ObservableObject
 
     public Visibility FocusVisibility => IsFocusMode ? Visibility.Visible : Visibility.Collapsed;
     public Visibility MultiVisibility => IsFocusMode ? Visibility.Collapsed : Visibility.Visible;
+    public Visibility AgentsVisibility => ShowAgents ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility InspectorVisibility => ShowInspector ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility ApprovalsVisibility => Approvals.Any(a => a.Status == "pending") ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility HomeVisibility => FocusSource == "home" ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility BrowserVisibility => FocusSource == "browser" ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility EditorVisibility => FocusSource == "editor" ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility TerminalVisibility => FocusSource is "terminal" ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility LiveVisibility => FocusSource == "live" ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility LogVisibility => FocusSource == "log" ? Visibility.Visible : Visibility.Collapsed;
 
     public MainViewModel(ApiClient api)
     {
         _api = api;
         WorkspacePath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-        Panels.Add(new WorkPanelViewModel("Iegultais pārlūks", "embedded_browser") { IsVisible = true });
-        Panels.Add(new WorkPanelViewModel("Redaktors", "editor") { IsVisible = true });
-        Panels.Add(new WorkPanelViewModel("Terminālis", "terminal") { IsVisible = true });
-        Panels.Add(new WorkPanelViewModel("Dzīvais attēls", "live_image") { IsVisible = true });
-        Panels.Add(new WorkPanelViewModel("Aģentu aktivitāte", "log") { IsVisible = true });
+        // Multi režīmā paneļi; Focus sākas tukšs (home) — programma parādās tikai kad tiek lietota
+        Panels.Add(new WorkPanelViewModel("Iegultais pārlūks", "embedded_browser") { IsVisible = false });
+        Panels.Add(new WorkPanelViewModel("Redaktors", "editor") { IsVisible = false });
+        Panels.Add(new WorkPanelViewModel("Terminālis", "terminal") { IsVisible = false });
+        Panels.Add(new WorkPanelViewModel("Dzīvais attēls", "live_image") { IsVisible = false });
+        Panels.Add(new WorkPanelViewModel("Aģentu aktivitāte", "log") { IsVisible = false });
     }
 
     public async Task InitializeAsync()
@@ -101,11 +113,51 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnIsFocusModeChanged(bool value)
     {
-        OnPropertyChanged(nameof(FocusVisibility));
-        OnPropertyChanged(nameof(MultiVisibility));
-        CurrentPanelKind = value ? $"Focus: {FocusSource}" : "Vairāku logu režīms";
+        NotifyWorkspaceVisibilities();
+        CurrentPanelKind = value ? PanelLabel(FocusSource) : "Vairāku logu režīms";
         _ = SaveLayoutAsync();
     }
+
+    partial void OnFocusSourceChanged(string value)
+    {
+        NotifyWorkspaceVisibilities();
+        CurrentPanelKind = PanelLabel(value);
+        foreach (var p in Panels)
+        {
+            p.IsVisible = value != "home" && (
+                (value == "browser" && p.Kind == "embedded_browser") ||
+                (value == "editor" && p.Kind == "editor") ||
+                (value == "terminal" && p.Kind == "terminal") ||
+                (value == "live" && p.Kind == "live_image") ||
+                (value == "log" && p.Kind == "log"));
+        }
+    }
+
+    partial void OnShowAgentsChanged(bool value) => OnPropertyChanged(nameof(AgentsVisibility));
+    partial void OnShowInspectorChanged(bool value) => OnPropertyChanged(nameof(InspectorVisibility));
+
+    private void NotifyWorkspaceVisibilities()
+    {
+        OnPropertyChanged(nameof(FocusVisibility));
+        OnPropertyChanged(nameof(MultiVisibility));
+        OnPropertyChanged(nameof(HomeVisibility));
+        OnPropertyChanged(nameof(BrowserVisibility));
+        OnPropertyChanged(nameof(EditorVisibility));
+        OnPropertyChanged(nameof(TerminalVisibility));
+        OnPropertyChanged(nameof(LiveVisibility));
+        OnPropertyChanged(nameof(LogVisibility));
+    }
+
+    private static string PanelLabel(string source) => source switch
+    {
+        "home" => "Sākums — gaida uzdevumu",
+        "browser" => "Iegultais pārlūks",
+        "editor" => "Redaktors",
+        "terminal" => "Terminālis",
+        "live" => "Dzīvais attēls",
+        "log" => "Žurnāls",
+        _ => source,
+    };
 
     [RelayCommand]
     private void SetFocusMode()
@@ -126,6 +178,26 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void ToggleAgents()
+    {
+        ShowAgents = !ShowAgents;
+        if (ShowAgents)
+        {
+            ShowInspector = false;
+        }
+    }
+
+    [RelayCommand]
+    private void ToggleInspector()
+    {
+        ShowInspector = !ShowInspector;
+        if (ShowInspector)
+        {
+            ShowAgents = false;
+        }
+    }
+
+    [RelayCommand]
     private void SelectFocusSource(string? source)
     {
         if (string.IsNullOrWhiteSpace(source) || FocusPinned)
@@ -134,7 +206,6 @@ public partial class MainViewModel : ObservableObject
         }
 
         FocusSource = source;
-        CurrentPanelKind = $"Focus: {source}";
         _ = SaveLayoutAsync();
     }
 
@@ -165,10 +236,12 @@ public partial class MainViewModel : ObservableObject
             ChatOutput += "\n" + SummarizeGoal(result);
             TerminalOutput += $"\n[{DateTime.Now:HH:mm:ss}] Mērķis pabeigts";
             InspectorText = "Uzdevuma rezultāts saņemts.";
+            ShowInspector = true;
             if (!FocusPinned)
             {
                 FocusSource = "log";
             }
+            OnPropertyChanged(nameof(ApprovalsVisibility));
         }
         catch (Exception ex)
         {
@@ -221,6 +294,7 @@ public partial class MainViewModel : ObservableObject
 
         await _api.DecideApprovalAsync(pending.Id, decision);
         await RefreshApprovalsAsync();
+        OnPropertyChanged(nameof(ApprovalsVisibility));
     }
 
     [RelayCommand]
@@ -294,6 +368,7 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        ShowInspector = true;
         InspectorText =
             $"Aģents: {value.Number:00}. {value.Name}\n" +
             $"Nodaļa: {value.Section}\n" +
