@@ -397,13 +397,14 @@ class ChatService:
         wiki_bits: list[str] = []
         if self._internet_enabled():
             try:
+                # Dziļāka meklēšana (lapu saturs) — budžets ~14s, ne Ollama
                 gathered = await asyncio.wait_for(
                     asyncio.gather(
-                        self._search_web(search_q),
+                        self._search_web(search_q, deep=True),
                         self._search_wikipedia(search_q),
                         return_exceptions=True,
                     ),
-                    timeout=8.0,
+                    timeout=14.0,
                 )
                 wh, wi = gathered
                 web_hits = wh if isinstance(wh, list) else []
@@ -421,7 +422,7 @@ class ChatService:
             and not self._is_noise_fact(str(h))
             and not self._looks_like_build_log(str(h))
         ]
-        spoken = self._facts_to_reply(q or search_q, facts)
+        spoken = self._synthesize_knowledge(q or search_q, facts, learn=learn)
         if not spoken:
             spoken = (
                 f"Par «{q or search_q}» sameklēju internetā (DuckDuckGo mazajā lodziņā). "
@@ -444,8 +445,9 @@ class ChatService:
         if saved_path:
             act_parts.append(f"Saglabāju failā: {saved_path}")
         if learn:
+            # Atmiņā — SINTEZĒTAIS teksts (ne raw snippet copy-paste)
             self._remember(q or search_q, spoken, kind="learn")
-            act_parts.append("[Iemācīts] Saglabāju arī atmiņā.")
+            act_parts.append("[Iemācīts] Saglabāju sintezēto zināšanu atmiņā (ne copy-paste).")
         else:
             self._remember(q or search_q, spoken, kind="search")
 
@@ -480,16 +482,16 @@ class ChatService:
             slug = re.sub(r"[^\wāčēģīķļņšūž\-]+", "_", (topic or "tema").strip(), flags=re.UNICODE)
             slug = (slug[:60] or "tema").strip("_") or "tema"
             path = docs / f"{slug}.md"
-            kind = "IEMĀCĪTS" if learn else "MEKLĒŠANA"
+            kind = "IEMĀCĪTS (sintezēts)" if learn else "MEKLĒŠANA (sintezēts)"
             body_lines = [
                 f"# {topic}",
                 "",
                 f"> {kind} · Main Brain · {utc_now().isoformat(timespec='seconds')}",
                 "",
-                "## Kopsavilkums",
+                "## Sintezētais kopsavilkums (saviem vārdiem)",
                 spoken,
                 "",
-                "## Avoti / fakti",
+                "## Avotu fragmenti (ne copy-paste atbilde)",
             ]
             for i, f in enumerate(facts[:8], 1):
                 body_lines.append(f"{i}. {str(f).strip()[:800]}")
@@ -547,30 +549,109 @@ class ChatService:
 
     @staticmethod
     def _facts_to_reply(topic: str, facts: list[str]) -> str:
-        """Saviem vārdiem — ko atrada, nevis sausi linki / muļķības."""
+        """Atpakaļsavietojamība — delegē uz sintezēšanu saviem vārdiem."""
+        return ChatService._synthesize_knowledge(topic, facts, learn=False)
+
+    @staticmethod
+    def _tokenize_overlap(a: str, b: str) -> float:
+        wa = set(re.findall(r"\w{3,}", a.lower(), flags=re.UNICODE))
+        wb = set(re.findall(r"\w{3,}", b.lower(), flags=re.UNICODE))
+        if not wa or not wb:
+            return 0.0
+        return len(wa & wb) / max(1, len(wa | wb))
+
+    @staticmethod
+    def _synthesize_knowledge(topic: str, facts: list[str], *, learn: bool = False) -> str:
+        """
+        Saviem vārdiem: pārstrukturē un deduplicē faktus — NE copy-paste no meklētāja.
+        Bez LLM/Ollama — ekstraktīva sintezēšana + latviešu ietvars.
+        """
         if not facts:
             return ""
-        cleaned: list[str] = []
-        for f in facts[:6]:
+        topic_l = (topic or "").strip().lower()
+        topic_tokens = set(re.findall(r"\w{3,}", topic_l, flags=re.UNICODE))
+        candidates: list[str] = []
+
+        for f in facts[:10]:
             chunk = str(f).strip()
             if _is_junk(chunk) or ChatService._is_noise_fact(chunk):
                 continue
             chunk = re.sub(r"(?im)^\s*Avots:\s*\S+\s*$", "", chunk).strip()
-            # Noņem HTML / pārmērīgus URL blokus no vidus
             chunk = re.sub(r"https?://\S+", "", chunk)
             chunk = re.sub(r"\s+", " ", chunk).strip(" -•|")
-            if len(chunk) > 280:
-                chunk = chunk[:280].rsplit(" ", 1)[0] + "…"
-            if chunk and len(chunk) >= 24 and chunk not in cleaned:
-                cleaned.append(chunk)
-            if len(cleaned) >= 3:
+            # Nomēt tikai «Title - …» / «Title | …» / «Title. Title…» echo — NE teikuma subjektu
+            if topic_l and chunk.lower().startswith(topic_l):
+                after = chunk[len(topic) :]
+                if after[:2].lstrip()[:1] in {"-", "|", ":", "·", "—"} or after.startswith(". " + topic[:1]):
+                    rest = after.lstrip(" -|:·—.")
+                    if len(rest) >= 30:
+                        chunk = rest
+            # Sadalām teikumos — ņemam saturīgos
+            weak = (
+                "click here", "subscribe", "cookie", "might also", "too minor",
+                "all rights", "sign in", "log in", "buy now", "download now",
+                "[ edit ]", "life and education", "prevented to work",
+                "might be a bit wrong", "see also", "external links",
+            )
+            for sent in re.split(r"(?<=[.!?])\s+", chunk):
+                s = sent.strip(" -•|\"'")
+                s = re.sub(r"\[\s*edit\s*\]", "", s, flags=re.I)
+                s = re.sub(r"\[\s*\d+\s*\]", "", s)
+                s = re.sub(r"\\n|\s+", " ", s).strip()
+                if len(s) < 40:
+                    continue
+                low = s.lower()
+                if any(w in low for w in weak):
+                    continue
+                words = re.findall(r"\w{3,}", low, flags=re.UNICODE)
+                if len(words) < 6:
+                    continue
+                # Atmet tīrus nosaukumus (gandrīz tikai topic tokens)
+                if topic_tokens:
+                    other = [w for w in words if w not in topic_tokens]
+                    if len(other) < 4:
+                        continue
+                # Dedup pret jau paņemtajiem
+                if any(ChatService._tokenize_overlap(s, prev) >= 0.72 for prev in candidates):
+                    continue
+                if len(s) > 260:
+                    s = s[:260].rsplit(" ", 1)[0] + "…"
+                if not s.endswith((".", "!", "?", "…")):
+                    s = s + "."
+                # Saglabā lielo burtu teikuma sākumā
+                if s and s[0].islower():
+                    s = s[0].upper() + s[1:]
+                candidates.append(s)
+                if len(candidates) >= (4 if learn else 3):
+                    break
+            if len(candidates) >= (4 if learn else 3):
                 break
-        if not cleaned:
+
+        if not candidates:
             return ""
-        if len(cleaned) == 1:
-            return f"Par «{topic}» atrada: {cleaned[0]}"
-        body = " ".join(f"{i}) {c}" for i, c in enumerate(cleaned, 1))
-        return f"Par «{topic}» atrada šādi. {body}"
+
+        # Saviem vārdiem — saistīts teksts, ne «1) paste 2) paste»
+        def _join_clause(s: str) -> str:
+            """Savieno bez brutālas lower() — saglabā īpašvārdus."""
+            return s
+
+        if len(candidates) == 1:
+            body = candidates[0]
+        elif len(candidates) == 2:
+            body = f"{candidates[0]} Turklāt {_join_clause(candidates[1])}"
+        else:
+            parts = [candidates[0]]
+            for c in candidates[1:-1]:
+                parts.append(f"Vēl — {_join_clause(c)}")
+            parts.append(f"Un nobeigumā: {_join_clause(candidates[-1])}")
+            body = " ".join(parts)
+
+        if learn:
+            return (
+                f"Iemācījos par «{topic}» saviem vārdiem (ne copy-paste no meklētāja). "
+                f"{body}"
+            )
+        return f"Par «{topic}» no avotu satura: {body}"
 
     async def _search_wikipedia(self, query: str) -> list[str]:
         """Ātri fakti par cilvēkiem/tēmām — bez LLM bloķēšanas."""
@@ -876,27 +957,50 @@ class ChatService:
         hits = sum(1 for m in markers if m in t)
         return hits >= 2
 
-    async def _search_web(self, query: str) -> list[str]:
+    async def _search_web(self, query: str, *, deep: bool = True) -> list[str]:
+        """Meklē + (deep) ielādē lapu saturu — ne tikai nosaukumus/snippetus."""
         try:
-            from mainbrain.tools.web import format_search_for_llm, web_search
+            from mainbrain.tools.web import deep_research, format_search_for_llm, web_search
 
-            # Īss timeout — meklēšana nedrīkst apēst visu chat budžetu
-            payload = await asyncio.wait_for(web_search(query, max_results=4), timeout=12.0)
-            if not payload.get("ok") and not payload.get("results"):
+            if deep:
+                # Dziļāka: DDG → top lapu teksts → satura fragmenti
+                payload = await asyncio.wait_for(
+                    deep_research(query, max_results=5, max_pages=3),
+                    timeout=12.0,
+                )
+                bits: list[str] = []
+                for fact in payload.get("facts") or []:
+                    chunk = str(fact).strip()
+                    if chunk and not _is_junk(chunk) and not self._is_noise_fact(chunk):
+                        bits.append(chunk[:420])
+                if bits:
+                    return bits[:6]
+                # Ja deep nedeva faktus — krīt uz snippet fallback zemāk
+                results = payload.get("results") or []
+            else:
+                payload = await asyncio.wait_for(web_search(query, max_results=4), timeout=12.0)
+                results = payload.get("results") or []
+
+            if not payload.get("ok") and not results:
                 return []
-            # Atsevišķi snippeti — nevis viens milzīgs «Vaicājums:…» bloks
-            bits: list[str] = []
-            for item in payload.get("results") or []:
+            # Fallback: snippeti BEZ «title. title» paste — tikai saturīgs snippet
+            bits = []
+            for item in results:
                 if not isinstance(item, dict):
                     continue
                 title = str(item.get("title") or "").strip()
                 snip = str(item.get("snippet") or "").strip()
-                chunk = f"{title}. {snip}".strip(" .")
+                if len(snip) < 40:
+                    continue
+                # Neņem, ja snippet ≈ nosaukums
+                if title and snip.lower()[: max(12, len(title) // 2)] == title.lower()[: max(12, len(title) // 2)]:
+                    continue
+                chunk = snip if snip else title
                 if chunk and not _is_junk(chunk) and not self._is_noise_fact(chunk):
                     bits.append(chunk[:350])
             if not bits:
-                text = format_search_for_llm(payload)
-                if text and not text.startswith("("):
+                text = format_search_for_llm(payload if isinstance(payload, dict) else {})
+                if text and not text.startswith("(") and "Rezultātu nav" not in text:
                     bits.append(text[:400])
             return bits[:4]
         except asyncio.TimeoutError:
@@ -912,7 +1016,9 @@ class ChatService:
         # Build/execute žurnālus NEINDEXĒJAM — citādi «hello.py» uzpeld personu meklēšanā
         if kind in {"execute", "build"}:
             return False
-        summary = reply.split("\n\n[Iemācīts]")[0].split("\n\n〔atmiņa〕")[0].split("\n\n[Darbība]")[0].strip()[:800]
+        summary = reply.split("\n\n[Iemācīts]")[0].split("\n\n〔atmiņa〕")[0].split("\n\n[Darbība]")[0].strip()
+        # Learn: garāks sintezētais teksts; search: kompaktāks
+        summary = summary[:1200] if kind == "learn" else summary[:800]
         if _is_junk(summary) or len(summary) < 24:
             return False
         if self._looks_like_build_log(summary) or self._is_noise_fact(summary):

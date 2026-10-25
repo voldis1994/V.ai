@@ -77,9 +77,70 @@ def test_facts_to_reply_and_duckduckgo_url():
     url = duckduckgo_url("Edgars Gaidulis")
     assert "duckduckgo.com" in url
     assert "Edgars" in url or "Gaidulis" in url or "%20" in url or "+" in url
-    text = ChatService._facts_to_reply("X", ["Fakts viens par X no avota."])
+    text = ChatService._facts_to_reply(
+        "X",
+        ["Fakts viens par X no avota ir svarīgs, jo tas skaidro kontekstu."],
+    )
     assert "Fakts viens" in text
     assert "X" in text
+
+
+def test_synthesize_knowledge_not_copy_paste_titles():
+    """Mācīšanās / meklēšana — saviem vārdiem, ne title paste."""
+    from mainbrain.brain.chat import ChatService
+
+    facts = [
+        "Edgars Gaidulis",  # tukšs nosaukums — jāizmet
+        "Edgars Gaidulis ir programmētājs no Latvijas, kas strādā ar Python un AI sistēmām.",
+        "Edgars Gaidulis ir programmētājs no Latvijas, kas strādā ar Python.",  # near-dup
+        "Viņš ir pazīstams ar atvērtā koda projektiem un lokāliem AI rīkiem Windows vidē.",
+    ]
+    spoken = ChatService._synthesize_knowledge("Edgars Gaidulis", facts, learn=True)
+    assert spoken
+    assert "Iemācījos" in spoken
+    assert "ne copy-paste" in spoken.lower() or "saviem vārdiem" in spoken.lower()
+    # Nedrīkst būt sausa «1) … 2) …» copy-paste forma
+    assert "1)" not in spoken
+    assert "programmētājs" in spoken.lower() or "python" in spoken.lower()
+
+    search_reply = ChatService._synthesize_knowledge("Edgars Gaidulis", facts, learn=False)
+    assert "no avotu satura" in search_reply.lower() or "Par «Edgars" in search_reply
+
+
+def test_extract_relevant_passages_prefers_substance():
+    from mainbrain.tools.web import extract_relevant_passages, _rank_search_results
+
+    page = (
+        "Home About Contact Cookie Policy Subscribe now. "
+        "Python is a high-level programming language used for web development, data science and AI. "
+        "It was created by Guido van Rossum and emphasizes readable syntax. "
+        "Buy our course today click here."
+    )
+    passages = extract_relevant_passages(page, "Python programming language", max_passages=3)
+    assert passages
+    joined = " ".join(passages).lower()
+    assert "high-level" in joined or "guido" in joined or "readable" in joined
+    assert "cookie" not in joined
+
+    ranked = _rank_search_results(
+        [
+            {
+                "title": "Python",
+                "url": "https://example.com/py",
+                "snippet": "Python",
+            },
+            {
+                "title": "Python (programming language) - Wikipedia",
+                "url": "https://en.wikipedia.org/wiki/Python_(programming_language)",
+                "snippet": (
+                    "Python is a high-level, general-purpose programming language. "
+                    "Its design philosophy emphasizes code readability."
+                ),
+            },
+        ],
+        "Python programming language",
+    )
+    assert "wikipedia.org" in ranked[0]["url"]
 
 
 def test_local_greet_without_llm():
