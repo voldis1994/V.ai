@@ -71,16 +71,12 @@
 
       <!-- FOCUS: one surface; empty until a program/panel is active -->
       <Grid Visibility="{Binding FocusVisibility}" Margin="0">
-        <!-- Home = chat surface -->
-        <Border Visibility="{Binding HomeVisibility}" Background="#0B1020" Padding="24">
-          <DockPanel MaxWidth="900" HorizontalAlignment="Center">
-            <TextBlock DockPanel.Dock="Top" Text="Saruna ar Main Brain" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,12"/>
-            <TextBlock DockPanel.Dock="Top" Text="Rakstiet brīvi — jautājumi, idejas, uzdevumi. Izpildei: «Izveido…» vai «Izpildi: …»"
-                       Foreground="{StaticResource MutedBrush}" Margin="0,0,0,12" TextWrapping="Wrap"/>
-            <TextBox Text="{Binding ChatOutput}" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
-                     Background="Transparent" Foreground="#E2E8F0" BorderThickness="0"
-                     VerticalScrollBarVisibility="Auto" FontSize="15"/>
-          </DockPanel>
+        <!-- Home = clean chat (no intro text) -->
+        <Border Visibility="{Binding HomeVisibility}" Background="#0B1020" Padding="20">
+          <TextBox Text="{Binding ChatOutput}" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True"
+                   Background="Transparent" Foreground="#E2E8F0" BorderThickness="0"
+                   VerticalScrollBarVisibility="Auto" FontSize="16"
+                   MaxWidth="920" HorizontalAlignment="Center"/>
         </Border>
 
         <Border Visibility="{Binding BrowserVisibility}" Background="#020617">

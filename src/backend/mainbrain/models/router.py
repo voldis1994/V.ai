@@ -121,15 +121,30 @@ class ModelRouter:
         temperature: float = 0.2,
         max_tokens: int = 1024,
     ) -> dict[str, Any]:
-        if role == ModelRole.NONE:
-            return {"ok": True, "text": "", "provider": "none"}
-        # Primāri llama.cpp; Ollama tikai ja ieslēgta; nekad mākonis
-        llama_ok, llama_detail = await self._probe_openai_compatible(self.settings.llama_base_url)
-        mapped = self._role_models.get(role)
-        messages = []
+        messages: list[dict[str, str]] = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
+        return await self.complete_messages(
+            role=role,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    async def complete_messages(
+        self,
+        *,
+        role: ModelRole,
+        messages: list[dict[str, str]],
+        temperature: float = 0.2,
+        max_tokens: int = 1024,
+    ) -> dict[str, Any]:
+        """OpenAI-style multi-turn chat (pareiza Qwen/llama-server saruna)."""
+        if role == ModelRole.NONE:
+            return {"ok": True, "text": "", "provider": "none"}
+        llama_ok, llama_detail = await self._probe_openai_compatible(self.settings.llama_base_url)
+        mapped = self._role_models.get(role)
         if llama_ok:
             return await self._chat_openai(self.settings.llama_base_url, messages, temperature, max_tokens)
         if self.settings.ollama_enabled:

@@ -21,10 +21,7 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private int _activeJobs;
     [ObservableProperty] private bool _isFocusMode = true;
     [ObservableProperty] private string _chatInput = "";
-    [ObservableProperty] private string _chatOutput =
-        "Sveiki! Esmu Main Brain — varam brīvi sarunāties latviešu valodā.\n" +
-        "Jautā, plāno, vai lūdz izpildīt (piem. «Izveido Python skriptu…»).\n" +
-        "Padoms: «Izpildi: …» piespiedīs aģentu orķestrāciju.";
+    [ObservableProperty] private string _chatOutput = "";
     [ObservableProperty] private string _chatSessionId = "ui";
     [ObservableProperty] private bool _isThinking;
     [ObservableProperty] private string _terminalOutput = "";
@@ -109,17 +106,9 @@ public partial class MainViewModel : ObservableObject
             AgentCountText = $"Aģenti: {Agents.Count}/50";
             await RefreshApprovalsAsync();
             await LoadLayoutAsync();
-            InspectorText =
-                $"Ielādēti {Agents.Count} aģenti (konfigurācijas kodā, nevis atsevišķi AI modeļi).\n" +
-                "Tie koplieto lokālo GGUF caur llama-server.\n" +
-                $"Režīms: {(IsFocusMode ? "Focus" : "Multi")}.\n" +
-                "Sarakstu skatiet: augšā poga «Aģenti».";
-            ChatOutput =
-                "Sveiki! Esmu Main Brain — varam brīvi sarunāties latviešu valodā.\n" +
-                $"Sistēmā ir {Agents.Count} specializēti aģenti (programmētājs, pārlūks, Windows u.c.).\n" +
-                "Tie NAV 50 atsevišķi lejupielādējami modeļi — tie ir lomas, kas izmanto jūsu GGUF.\n" +
-                "Rakstiet šeit; «Izveido…» / «Izpildi: …» palaizīs aģentus.\n" +
-                "Saraksts: poga «Aģenti» augšā.";
+            InspectorText = $"Aģenti: {Agents.Count}/50";
+            // Chat starts empty — no intro wall of text
+            ChatOutput = "";
         }
         catch (Exception ex)
         {
@@ -246,9 +235,16 @@ public partial class MainViewModel : ObservableObject
         ChatInput = "";
         ActiveJobs++;
         IsThinking = true;
-        ChatOutput += $"\n\nTu: {userText}";
-        // Saruna ir galvenā virsma — paliekam chat/home, ja nav fiksēts cits panelis
-        if (!FocusPinned && FocusSource is "home" or "log")
+        if (string.IsNullOrWhiteSpace(ChatOutput))
+        {
+            ChatOutput = $"Tu: {userText}";
+        }
+        else
+        {
+            ChatOutput += $"\n\nTu: {userText}";
+        }
+
+        if (!FocusPinned)
         {
             FocusSource = "home";
         }
@@ -261,22 +257,17 @@ public partial class MainViewModel : ObservableObject
                 SessionId = ChatSessionId,
                 WorkspacePath = string.IsNullOrWhiteSpace(WorkspacePath) ? null : WorkspacePath,
             });
-            ChatOutput += $"\n\nMain Brain: {result.Reply}";
+            ChatOutput += $"\nMain Brain: {result.Reply}";
             if (result.Mode == "execute")
             {
                 TerminalOutput += $"\n[{DateTime.Now:HH:mm:ss}] Izpilde: {result.GoalStatus}";
-                InspectorText = $"Uzdevums izpildīts. Statuss: {result.GoalStatus}";
-                ShowInspector = true;
-                if (!FocusPinned)
-                {
-                    FocusSource = "log";
-                }
+                InspectorText = $"Uzdevums: {result.GoalStatus}";
             }
             OnPropertyChanged(nameof(ApprovalsVisibility));
         }
         catch (Exception ex)
         {
-            ChatOutput += "\n\nMain Brain: Kļūda — " + ex.Message;
+            ChatOutput += "\nMain Brain: Kļūda — " + ex.Message;
         }
         finally
         {
