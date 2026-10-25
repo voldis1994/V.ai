@@ -36,11 +36,55 @@ def resolve_app(name: str) -> tuple[str, list[str]] | None:
         "firefox": ("firefox.exe", []),
         "paint": ("mspaint.exe", []),
         "wordpad": ("wordpad.exe", []),
+        "word": ("winword.exe", []),
+        "excel": ("excel.exe", []),
+        "powerpoint": ("powerpnt.exe", []),
+        "spotify": ("spotify.exe", []),
+        "discord": ("discord.exe", []),
+        "telegram": ("telegram.exe", []),
+        "steam": ("steam.exe", []),
+        "vlc": ("vlc.exe", []),
+        "notepad++": ("notepad++.exe", []),
+        "npp": ("notepad++.exe", []),
+        "python": ("python.exe", []),
+        "terminal": ("wt.exe", []),
+        "windows terminal": ("wt.exe", []),
     }
     if n in mapping:
         return mapping[n]
     if n.endswith(".exe"):
         return (n, [])
+    # where.exe / PATH — atrast instalēto programmu pēc vārda
+    found = _which_program(n if n.endswith(".exe") else n)
+    if found:
+        return (found, [])
+    return None
+
+
+def _which_program(name: str) -> str | None:
+    """Mēģina atrast instalētu exe (where / shutil.which)."""
+    import shutil
+
+    candidates = [name, f"{name}.exe"] if not name.endswith(".exe") else [name]
+    for c in candidates:
+        hit = shutil.which(c)
+        if hit:
+            return hit
+    if sys.platform.startswith("win"):
+        for c in candidates:
+            try:
+                out = subprocess.run(
+                    ["where", c],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                line = (out.stdout or "").strip().splitlines()
+                if line:
+                    return line[0].strip()
+            except Exception:  # noqa: BLE001
+                continue
     return None
 
 
@@ -178,23 +222,73 @@ class PhysicalActor:
     def create_and_open_text(self, path: Path, content: str, *, open_with: str | None = "notepad") -> dict[str, Any]:
         path.parent.mkdir(parents=True, exist_ok=True)
         write = self._exec("files.write", {"path": str(path), "content": content})
+        # Fallback: tieša rakstīšana, ja tools.files.write nav
+        if not write.ok:
+            try:
+                path.write_text(content, encoding="utf-8")
+                write_ok = True
+            except OSError as exc:
+                return {"write_ok": False, "path": str(path), "error": str(exc)}
+        else:
+            write_ok = True
+            try:
+                if not path.is_file():
+                    path.write_text(content, encoding="utf-8")
+            except OSError:
+                pass
+
         opened = None
+        used = open_with
         if open_with:
-            if open_with.lower() in {"notepad", "notepad.exe"} and sys.platform.startswith("win"):
+            if open_with.lower() in {"auto", "best", "editor"}:
+                used = self.open_in_best_editor(str(path))
+                opened = {"ok": True, "via": used}
+            elif open_with.lower() in {"notepad", "notepad.exe"} and sys.platform.startswith("win"):
                 opened = self.launch_app("notepad", [str(path)])
+                used = "notepad"
             else:
                 opened = self.open_path(str(path))
+                used = open_with
         return {
-            "write_ok": write.ok,
+            "write_ok": write_ok,
             "path": str(path),
             "opened": opened,
-            "write": write.output,
-            "error": write.error,
+            "open_with": used,
+            "write": getattr(write, "output", None),
+            "error": getattr(write, "error", None),
         }
+
+    def open_in_best_editor(self, path: str) -> str:
+        """Atver failu ar VS Code / Notepad++ / Notepad — kas pieejams datorā."""
+        p = str(path)
+        for app in ("code", "notepad++", "notepad"):
+            resolved = resolve_app(app)
+            if resolved is None and app != "notepad":
+                continue
+            try:
+                if app == "code":
+                    # code.cmd var būt PATH; start "" "code" file
+                    result = self.launch_app("code", [p])
+                    if result.get("ok") or result.get("performed"):
+                        return "VS Code"
+                elif app == "notepad++":
+                    result = self.launch_app("notepad++", [p])
+                    if result.get("ok") or result.get("performed"):
+                        return "Notepad++"
+                else:
+                    self.launch_app("notepad", [p])
+                    return "Notepad"
+            except Exception:  # noqa: BLE001
+                continue
+        self.open_path(p)
+        return "noklusējuma programma"
 
     def detect_open_app(self, message: str) -> str | None:
         m = re.search(
-            r"(?i)\b(?:atver|atvērt|open|palaid|palaist|start)\s+(notepad|calc|calculator|explorer|chrome|edge|firefox|code|vscode|powershell|cmd|paint)\b",
+            r"(?i)\b(?:atver|atvērt|open|palaid|palaist|start)\s+"
+            r"(notepad\+{0,2}|npp|calc|calculator|explorer|chrome|edge|firefox|"
+            r"code|vscode|powershell|cmd|paint|word|excel|spotify|discord|"
+            r"telegram|steam|vlc|python|terminal)\b",
             message,
         )
         return m.group(1) if m else None

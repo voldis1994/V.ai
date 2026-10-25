@@ -613,12 +613,12 @@ public sealed class MatrixMindCanvas : FrameworkElement
         var boxX = (_size.Width - boxW) / 2.0;
         var boxY = Math.Max(56, (_size.Height - boxH) / 2.0);
 
-        // Tumšs panelis ar rozā rāmi — atbilde skaidri lasāma
-        var bg = new SolidColorBrush(Color.FromArgb(210, 8, 2, 12));
-        var border = new Pen(new SolidColorBrush(Color.FromArgb(180, 255, 46, 203)), 1.5);
+        // Caurspīdīgs panelis — Matrix lietus cauri, teksts joprojām lasāms
+        var bg = new SolidColorBrush(Color.FromArgb(110, 8, 2, 12));
+        var border = new Pen(new SolidColorBrush(Color.FromArgb(140, 255, 46, 203)), 1.2);
         dc.DrawRoundedRectangle(bg, border, new Rect(boxX, boxY, boxW, boxH), 8, 8);
 
-        var glow = new SolidColorBrush(Color.FromArgb(40, 255, 46, 203));
+        var glow = new SolidColorBrush(Color.FromArgb(28, 255, 46, 203));
         dc.DrawRoundedRectangle(glow, null, new Rect(boxX - 2, boxY - 2, boxW + 4, boxH + 4), 10, 10);
 
         dc.DrawText(body, new Point(boxX + padX, boxY + padY));

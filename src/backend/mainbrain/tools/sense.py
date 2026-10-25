@@ -183,27 +183,57 @@ def image_to_data_url(path: str, *, max_side: int = 768) -> str | None:
     return f"data:image/jpeg;base64,{b64}"
 
 
+def _lv_phonetic_for_en_voice(text: str) -> str:
+    """Ja nav latviešu SAPI balss — aptuvena fonētika angļu balsij."""
+    repl = (
+        ("č", "ch"), ("Č", "Ch"),
+        ("š", "sh"), ("Š", "Sh"),
+        ("ž", "zh"), ("Ž", "Zh"),
+        ("ā", "aa"), ("Ā", "Aa"),
+        ("ē", "ee"), ("Ē", "Ee"),
+        ("ī", "ii"), ("Ī", "Ii"),
+        ("ū", "uu"), ("Ū", "Uu"),
+        ("ģ", "gy"), ("Ģ", "Gy"),
+        ("ķ", "ky"), ("Ķ", "Ky"),
+        ("ļ", "ly"), ("Ļ", "Ly"),
+        ("ņ", "ny"), ("Ņ", "Ny"),
+    )
+    out = text
+    for a, b in repl:
+        out = out.replace(a, b)
+    return out
+
+
 def speak_text(text: str, *, lang: str = "lv") -> dict[str, Any]:
-    """Lokāla runāšana: Windows SAPI, citādi espeak/spd-say."""
+    """Lokāla runāšana: Windows SAPI (LV balss ja ir), citādi espeak/spd-say."""
     t = (text or "").strip()
     if not t:
         return {"ok": False, "error": "Tukšs teksts"}
-    # Saīsina ļoti garas atbildes
     if len(t) > 800:
         t = t[:800] + "…"
-    # Viena rinda runāšanai
     t = " ".join(t.split())
 
     if sys.platform.startswith("win"):
-        # -EncodedCommand + Base64 teksts — latviešu burti / pēdiņas nesalūzt
-        payload_b64 = base64.b64encode(t.encode("utf-8")).decode("ascii")
+        # Preferē latviešu balsi; ja nav — fonētika angļu balsij
+        phonetic = _lv_phonetic_for_en_voice(t) if lang.startswith("lv") else t
+        raw_b64 = base64.b64encode(t.encode("utf-8")).decode("ascii")
+        pho_b64 = base64.b64encode(phonetic.encode("utf-8")).decode("ascii")
         ps = (
             "Add-Type -AssemblyName System.Speech; "
             "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-            "$s.Rate = 0; "
-            f"$bytes = [Convert]::FromBase64String('{payload_b64}'); "
-            "$msg = [System.Text.Encoding]::UTF8.GetString($bytes); "
-            "$s.Speak($msg)"
+            "$s.Rate = -1; "
+            "$voices = @($s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo }); "
+            "$lv = $voices | Where-Object { "
+            "  $_.Culture.Name -like 'lv*' -or $_.Name -match 'Latvi' "
+            "} | Select-Object -First 1; "
+            f"$raw = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{raw_b64}')); "
+            f"$pho = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{pho_b64}')); "
+            "if ($lv) { $s.SelectVoice($lv.Name); $s.Speak($raw) } "
+            "else { "
+            "  $en = $voices | Where-Object { $_.Culture.Name -like 'en*' } | Select-Object -First 1; "
+            "  if ($en) { $s.SelectVoice($en.Name) }; "
+            "  $s.Speak($pho) "
+            "}"
         )
         encoded = base64.b64encode(ps.encode("utf-16le")).decode("ascii")
         try:

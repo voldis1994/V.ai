@@ -117,6 +117,16 @@ def test_meta_ollama_and_learning_without_llm():
         low = r2.reply.lower()
         assert "neizmanto" in low or "netiek" in low or "nav" in low or "izslēgt" in low
 
+        # «iemācies» NEDRĪKST atkārtot meta frāzi — jājautā tēmu vai jāmācās
+        r3 = await svc.chat(ChatRequest(message="iemācies", session_id="meta3"))
+        assert "mācos no mūsu sarunām" not in r3.reply.lower()
+        assert "iegaumēt" in r3.reply.lower() or "iemācies" in r3.reply.lower()
+
+        # Meta helper: komanda ar tēmu → None (apstrādā LEARN ceļš)
+        assert ChatService._meta_about_self("iemācies python") is None
+        assert ChatService._meta_about_self("iemācies") is None
+        assert ChatService._meta_about_self("Vai tu mācies?") is not None
+
     asyncio.run(run())
 
 

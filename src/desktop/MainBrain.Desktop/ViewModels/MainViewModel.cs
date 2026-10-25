@@ -344,6 +344,14 @@ public partial class MainViewModel : ObservableObject
             ShowImmersiveActivity = false;
             MatrixStatus = "";
             FormedAnswer = string.IsNullOrWhiteSpace(spoken) ? reply : spoken;
+
+            // Ja saglabāts/atvērts fails vai programma — rādi Windows logu (nevis Topmost overlay)
+            if (!string.IsNullOrWhiteSpace(result.OpenPath) ||
+                result.UiAction is "open_path" or "open_app")
+            {
+                YieldForExternalAction?.Invoke(result.UiAction ?? "file");
+            }
+
             if (!string.IsNullOrWhiteSpace(spoken))
             {
                 SpeakLocal(spoken);
@@ -420,17 +428,20 @@ public partial class MainViewModel : ObservableObject
         if (build)
         {
             MatrixStatus = "◈ TAISU …";
-            ActivityTitle = "◈ KO ES DARU · taisīšana";
-            FormedAnswer = "Taisu uzdevumu. Rezultātu redzēsi šeit un, ja vajag, atvēršu failu.";
+            ActivityTitle = "◈ KO ES DARU · rakstu failu";
+            FormedAnswer =
+                "Taisu uzdevumu:\n1) Veidoju failu\n2) Rakstu kodu\n3) Atveru redaktorā (VS Code/Notepad)\n\nSkaties Windows logu — tur redzēsi, ko es daru.";
             ShowImmersiveActivity = false;
+            // Ļaujam redaktoram/Notepad parādīties priekšā
+            YieldForExternalAction?.Invoke("build");
             return new ActionPreview(false, null);
         }
 
         if (openApp && !search)
         {
-            MatrixStatus = "◈ ATVERU …";
+            MatrixStatus = "◈ ATVERU PROGRAMMU …";
             ActivityTitle = "◈ KO ES DARU · programma";
-            FormedAnswer = "Atveru programmu. Windows logā redzēsi darbību.";
+            FormedAnswer = "Atveru programmu no tava datora. Windows logā redzēsi to uzreiz.";
             YieldForExternalAction?.Invoke("open");
             return new ActionPreview(false, null);
         }
@@ -574,7 +585,28 @@ public partial class MainViewModel : ObservableObject
         return t;
     }
 
-    /// <summary>Windows SAPI caur -EncodedCommand — latviešu burti / pēdiņas nesalūzt.</summary>
+    /// <summary>Latviešu → aptuvena fonētika, ja nav LV SAPI balss.</summary>
+    private static string LatvianPhonetic(string text)
+    {
+        var map = new (string a, string b)[]
+        {
+            ("č", "ch"), ("Č", "Ch"), ("š", "sh"), ("Š", "Sh"),
+            ("ž", "zh"), ("Ž", "Zh"), ("ā", "aa"), ("Ā", "Aa"),
+            ("ē", "ee"), ("Ē", "Ee"), ("ī", "ii"), ("Ī", "Ii"),
+            ("ū", "uu"), ("Ū", "Uu"), ("ģ", "gy"), ("Ģ", "Gy"),
+            ("ķ", "ky"), ("Ķ", "Ky"), ("ļ", "ly"), ("Ļ", "Ly"),
+            ("ņ", "ny"), ("Ņ", "Ny"),
+        };
+        var t = text;
+        foreach (var (a, b) in map)
+        {
+            t = t.Replace(a, b);
+        }
+
+        return t;
+    }
+
+    /// <summary>Windows SAPI: LV balss ja ir, citādi EN + fonētika.</summary>
     private static void SpeakLocal(string text)
     {
         try
@@ -591,15 +623,19 @@ public partial class MainViewModel : ObservableObject
                 t = t[..500] + "…";
             }
 
-            // Tekstu iebāžam Base64 — nekādu quoting problēmu ar ā/č/«»
-            var b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(t));
+            var rawB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(t));
+            var phoB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(LatvianPhonetic(t)));
             var script =
                 "Add-Type -AssemblyName System.Speech; " +
                 "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; " +
-                "$s.Rate = 0; " +
-                "$bytes = [Convert]::FromBase64String('" + b64 + "'); " +
-                "$t = [System.Text.Encoding]::UTF8.GetString($bytes); " +
-                "$s.Speak($t)";
+                "$s.Rate = -1; " +
+                "$voices = @($s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo }); " +
+                "$lv = $voices | Where-Object { $_.Culture.Name -like 'lv*' -or $_.Name -match 'Latvi' } | Select-Object -First 1; " +
+                "$raw = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + rawB64 + "')); " +
+                "$pho = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + phoB64 + "')); " +
+                "if ($lv) { $s.SelectVoice($lv.Name); $s.Speak($raw) } " +
+                "else { $en = $voices | Where-Object { $_.Culture.Name -like 'en*' } | Select-Object -First 1; " +
+                "if ($en) { $s.SelectVoice($en.Name) }; $s.Speak($pho) }";
             var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
             Process.Start(new ProcessStartInfo
             {

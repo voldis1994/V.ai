@@ -169,13 +169,14 @@ class ChatService:
             if math_reply:
                 return self._finish(session, history, math_reply)
 
-        # Meta: mācīšanās / Ollama — godīga, deterministiska atbilde (bez LLM muļķībām)
-        meta = self._meta_about_self(user_msg)
-        if meta:
-            return self._finish(session, history, meta)
+        # Meta TIKAI jautājumiem «vai tu mācies?» — NE komandai «iemācies X»
+        if intent not in {Intent.LEARN, Intent.BUILD, Intent.SEARCH, Intent.PERSON, Intent.EXPLAIN}:
+            meta = self._meta_about_self(user_msg)
+            if meta:
+                return self._finish(session, history, meta, speak_text=meta, user_msg=user_msg)
 
-        # Valodu īsie FAQ
-        if re.search(r"(?i)(valod|language|scottish|scotland|skotij)", user_msg):
+        # Valodu īsie FAQ — tikai skaidri jautājumi par valodām (ne «izrunā valodu»)
+        if re.search(r"(?i)\b(kād[aā]s?\s+valod|which\s+language|scottish|scotland|skotij)", user_msg):
             if re.search(r"(?i)(scottish|scotland|skot)", user_msg):
                 reply = (
                     "Skotijā oficiāli lieto angļu; papildus — skotu (Scots) un skotu gēlu. "
@@ -186,12 +187,20 @@ class ChatService:
                     "Es saprotu un atbildu latviešu un angļu valodā. "
                     "Citas valodas — vāji (lokālais modelis)."
                 )
-            return self._finish(session, history, reply)
+            return self._finish(session, history, reply, speak_text=reply, user_msg=user_msg)
 
         topic = extract_topic(user_msg)
 
-        # BRĪVAIS REŽĪMS: jautājumi / personas / meklēšana / skaidrojumi
-        # → UZREIZ pārlūks + fakti. NEgaidām Ollama un NEgaidām lēno LLM.
+        # «iemācies» bez tēmas — pajautā, KO iegaumēt (nevis atkārto meta frāzi)
+        if intent == Intent.LEARN and (not topic or topic.lower().strip() in {"iemācies", "learn", "iemāci"}):
+            ask = (
+                "Labi — ko tieši iegaumēt? Piemēram: «iemācies kas ir Python» "
+                "vai «iemācies Edgars Gaidulis». Es sameklēšu, saglabāšu failā un atmiņā."
+            )
+            return self._finish(session, history, ask, speak_text=ask, user_msg=user_msg)
+
+        # BRĪVAIS REŽĪMS: jautājumi / personas / meklēšana / skaidrojumi / iemācies
+        # → pārlūks + fakti + SAGLABĀ fails. NEgaidām Ollama.
         if intent in {Intent.PERSON, Intent.SEARCH, Intent.EXPLAIN, Intent.LEARN} or (
             intent == Intent.CHAT and self._looks_like_question(user_msg)
         ):
@@ -417,27 +426,81 @@ class ChatService:
                 "bet meklēšanu atvēru — rezultāti bija redzami mazajā lodziņā."
             )
 
-        act_note = f"\n\n[Darbība] Atvēru pārlūku → {url}"
+        # FIZISKI saglabā atrastos faktus failā + atver Notepad/editor — nevis «tikai atvēru»
+        saved_path = self._persist_findings(
+            topic=q,
+            spoken=spoken,
+            facts=facts,
+            url=url,
+            learn=learn,
+            actor=actor,
+        )
+
+        act_parts = [f"[Darbība] Atvēru pārlūku → {url}"]
         if isinstance(opened, dict) and opened.get("error"):
-            act_note += f" ({opened.get('error')})"
+            act_parts.append(f"({opened.get('error')})")
+        if saved_path:
+            act_parts.append(f"Saglabāju failā: {saved_path}")
         if learn:
             self._remember(q, spoken, kind="learn")
-            act_note += "\n[Iemācīts] Saglabāju atmiņā."
+            act_parts.append("[Iemācīts] Saglabāju arī atmiņā.")
         else:
             self._remember(q, spoken, kind="search")
 
-        # runā KO ATRADA — Desktop aizver PiP un SpeakLocal(speak_text)
+        reply = spoken + "\n\n" + "\n".join(act_parts)
         return self._finish(
             session,
             history,
-            spoken + act_note,
+            reply,
             mode="act",
-            ui_action="open_browser",
+            ui_action="open_path" if saved_path else "open_browser",
             open_url=url,
-            focus="browser",
+            open_path=saved_path,
+            focus="editor" if saved_path else "browser",
             speak_text=spoken,
             user_msg=user_msg,
         )
+
+    def _persist_findings(
+        self,
+        *,
+        topic: str,
+        spoken: str,
+        facts: list[str],
+        url: str,
+        learn: bool,
+        actor: PhysicalActor | None,
+    ) -> str | None:
+        """Raksta atrastos faktus Documents/MainBrainOS/knowledge/*.md un atver failu."""
+        try:
+            docs = Path.home() / "Documents" / "MainBrainOS" / "knowledge"
+            docs.mkdir(parents=True, exist_ok=True)
+            slug = re.sub(r"[^\wāčēģīķļņšūž\-]+", "_", (topic or "tema").strip(), flags=re.UNICODE)
+            slug = (slug[:60] or "tema").strip("_") or "tema"
+            path = docs / f"{slug}.md"
+            kind = "IEMĀCĪTS" if learn else "MEKLĒŠANA"
+            body_lines = [
+                f"# {topic}",
+                "",
+                f"> {kind} · Main Brain · {utc_now().isoformat(timespec='seconds')}",
+                "",
+                "## Kopsavilkums",
+                spoken,
+                "",
+                "## Avoti / fakti",
+            ]
+            for i, f in enumerate(facts[:8], 1):
+                body_lines.append(f"{i}. {str(f).strip()[:800]}")
+            body_lines.extend(["", f"## Meklēšana", url, ""])
+            content = "\n".join(body_lines)
+            if actor is not None:
+                result = actor.create_and_open_text(path, content, open_with="notepad")
+                if result.get("write_ok") or path.is_file():
+                    return str(path)
+            path.write_text(content, encoding="utf-8")
+            return str(path)
+        except Exception:  # noqa: BLE001
+            return None
 
     @staticmethod
     def _facts_to_reply(topic: str, facts: list[str]) -> str:
@@ -725,14 +788,24 @@ class ChatService:
 
     @staticmethod
     def _meta_about_self(user_msg: str) -> str | None:
-        """Godīgas atbildes par mācīšanos / Ollama — bez LLM."""
+        """Tikai JAUTĀJUMI par sevi — ne komanda «iemācies X» (to dara LEARN ceļš)."""
         t = (user_msg or "").strip()
         if not t:
             return None
+        # Komanda «iemācies …» / «learn …» ar tēmu — NAV meta
+        if re.match(r"(?i)^\s*(iemācies|iemāci|iemācīties|learn|teach)\b.+", t):
+            return None
+        if re.match(r"(?i)^\s*(iemācies|iemāci|learn)\s*$", t):
+            return None
+
         about_learn = bool(
             re.search(
-                r"(?i)\b(mācies|mācās|mācīties|mācīšan|iemācies|pati?\s+māc|self[- ]?learn|"
-                r"learn(s|ing)?\s+(by\s+itself|alone|automatically)|vai\s+tu\s+māc)\b",
+                r"(?i)("
+                r"vai\s+tu\s+(pati?\s+)?māc|kā\s+tu\s+māc|vai\s+mācies|"
+                r"pati?\s+māc|self[- ]?learn|"
+                r"learn(s|ing)?\s+(by\s+itself|alone|automatically)|"
+                r"do\s+you\s+learn|can\s+you\s+learn"
+                r")",
                 t,
             )
         )
@@ -743,14 +816,12 @@ class ChatService:
         if not (about_learn or about_ollama or about_model):
             return None
         parts: list[str] = []
-        # Parastam lietotājam — cilvēciski, bez tehniskā žargona
         if about_learn:
             parts.append(
-                "Jā — es mācos no mūsu sarunām. "
-                "Labās atbildes saglabāju atmiņā un nākamreiz tās izmantoju. "
-                "Ja gribi, lai es īpaši iegaumēju tēmu, saki: «iemācies …»."
+                "Jā — es mācos no mūsu sarunām: labās atbildes lieku atmiņā. "
+                "Lai iegaumētu konkrētu tēmu UZREIZ, saki «iemācies …» — "
+                "tad sameklēšu internetā, saglabāšu failā un atmiņā."
             )
-            # Tehniskās detaļas tikai ja jautā par modeli/GGUF/Ollama
             if about_model or about_ollama:
                 parts.append(
                     "(Tehniski: atmiņa ir lokāla zināšanu bāze, ne modeļa svaru pārtrenēšana.)"
@@ -864,13 +935,31 @@ class ChatService:
         session: str,
         history: list[dict[str, str]],
     ) -> ChatResponse:
-        ack_text = "Sapratu uzdevumu — sāku izpildi ar aģentiem."
         goal = req.message.strip()
         for prefix in ("izpildi:", "izpildīt:", "dari:", "run:", "/run"):
             if goal.lower().startswith(prefix):
                 goal = goal[len(prefix) :].strip()
                 break
 
+        # Ātrais ceļš: vienkāršs Python / teksta fails — UZREIZ raksta + atver (redzams)
+        quick = self._quick_build(goal, req.workspace_path)
+        if quick is not None:
+            reply, path, spoken = quick
+            self._remember(goal[:120], reply, kind="execute")
+            return self._finish(
+                session,
+                history,
+                reply,
+                mode="execute",
+                goal_status="completed",
+                ui_action="open_path",
+                open_path=path,
+                focus="editor",
+                speak_text=spoken,
+                user_msg=req.message,
+            )
+
+        ack_text = "Sapratu — sāku taisīt. Tagad rakstu failus un atvēršu tos, lai redzi ko daru."
         try:
             result = await self.brain.run_goal(
                 RunGoalRequest(
@@ -917,25 +1006,24 @@ class ChatService:
                             pass
                         break
 
-        # FIZISKI atver izveidoto failu (Notepad / noklusējuma programma)
         open_path = paths[0] if paths else None
         actor = self._actor()
         if actor is not None and open_path:
             try:
-                if open_path.endswith((".py", ".txt", ".md", ".cs", ".json")):
-                    actor.launch_app("notepad", [open_path])
-                else:
-                    actor.open_path(open_path)
-                parts.append(f"Atvēru failu: {open_path}")
+                # Preferē VS Code, ja ir; citādi Notepad — lietotājs REDZ darbu
+                opened_with = actor.open_in_best_editor(open_path)
+                parts.append(f"Atvēru ar {opened_with}: {open_path}")
             except Exception as exc:  # noqa: BLE001
                 parts.append(f"(Neizdevās atvērt failu: {exc})")
 
         summary = "\n".join(parts)
-        # Mācās no izpildes — nākamreiz zinās, ko darīja
         self._remember(goal[:120], summary, kind="execute")
         if "iemāc" in goal.lower() or "learn" in goal.lower():
             parts.append("[Iemācīts] Saglabāju arī šo izpildi zināšanu bāzē.")
             summary = "\n".join(parts)
+        spoken = f"Uzdevums {status}. " + (
+            f"Izveidoju {Path(open_path).name}." if open_path else "Skaties rezultātu."
+        )
         return self._finish(
             session,
             history,
@@ -945,7 +1033,77 @@ class ChatService:
             ui_action="open_path" if open_path else "none",
             open_path=open_path,
             focus="editor" if open_path else "home",
+            speak_text=spoken,
+            user_msg=req.message,
         )
+
+    def _quick_build(
+        self, goal: str, workspace_path: str | None
+    ) -> tuple[str, str, str] | None:
+        """Vienkārši «uzraksti python / hello / skriptu» — uzreiz fails + redaktors."""
+        g = (goal or "").lower()
+        wants_py = bool(
+            re.search(r"(?i)\b(python|\.py|skript|script|hello\s*world|programma)\b", goal)
+        )
+        if not wants_py:
+            return None
+        # Lieli «sistēma / sejas» — atstāj aģentiem
+        if re.search(r"(?i)\b(seja|face|sistēm|os\b|windows\s+app|pilnu?\s+projekt)", g):
+            return None
+
+        root = Path(workspace_path) if workspace_path else Path.home() / "Documents" / "MainBrainOS" / "projects"
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            root = Path.cwd()
+
+        named = re.search(r"(?i)\b([\w\-]+)\.py\b", goal)
+        if "hello" in g:
+            fname = "hello.py"
+            code = 'print("Hello, World!")\n'
+        elif named:
+            fname = named.group(1) + ".py"
+            code = (
+                f'"""{goal.strip()[:120]}"""\n\n'
+                f"def main() -> None:\n"
+                f'    print("OK: {fname}")\n\n'
+                f'if __name__ == "__main__":\n'
+                f"    main()\n"
+            )
+        else:
+            fname = "script.py"
+            code = (
+                f'"""Auto: {goal.strip()[:100]}"""\n\n'
+                f"def main() -> None:\n"
+                f'    print("Main Brain skripts darbojas")\n\n'
+                f'if __name__ == "__main__":\n'
+                f"    main()\n"
+            )
+
+        path = root / fname
+        actor = self._actor()
+        steps = [
+            f"1) Veidoju mapi: {root}",
+            f"2) Rakstu failu: {path}",
+            f"3) Saturs:\n```\n{code}```",
+        ]
+        try:
+            if actor is not None:
+                actor.create_and_open_text(path, code, open_with="auto")
+                steps.append("4) Atvēru redaktorā (VS Code / Notepad) — skaties logu.")
+            else:
+                path.write_text(code, encoding="utf-8")
+                steps.append("4) Fails saglabāts (redaktoru nevarēju atvērt).")
+        except Exception as exc:  # noqa: BLE001
+            try:
+                path.write_text(code, encoding="utf-8")
+            except OSError:
+                return None
+            steps.append(f"4) Fails saglabāts; atvēršana: {exc}")
+
+        reply = "Taisu Python skriptu — lūk, ko daru:\n" + "\n".join(steps)
+        spoken = f"Izveidoju failu {fname} un atvēru to redaktorā."
+        return reply, str(path), spoken
 
     @staticmethod
     def _try_math(message: str) -> str | None:

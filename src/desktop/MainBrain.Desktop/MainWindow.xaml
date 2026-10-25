@@ -34,13 +34,14 @@
       <!-- Labā puse: mazais «ko es daru» logs (augšā) + kamera (apakšā) -->
       <StackPanel Grid.Row="0" Grid.Column="1" VerticalAlignment="Top" Margin="0,56,20,0">
         <Border Width="440" Height="300" CornerRadius="8"
-                BorderBrush="#AAFF2ECB" BorderThickness="2" Background="#F208020A"
-                Visibility="{Binding ImmersiveActivityVisibility}" Margin="0,0,0,12">
+                BorderBrush="#88FF2ECB" BorderThickness="1.5" Background="#6608020A"
+                Visibility="{Binding ImmersiveActivityVisibility}" Margin="0,0,0,12"
+                Opacity="0.92">
           <Border.Effect>
-            <DropShadowEffect Color="#FF2ECB" BlurRadius="20" ShadowDepth="0" Opacity="0.5"/>
+            <DropShadowEffect Color="#FF2ECB" BlurRadius="16" ShadowDepth="0" Opacity="0.35"/>
           </Border.Effect>
           <DockPanel>
-            <Border DockPanel.Dock="Top" Background="#4408020A" Padding="10,7"
+            <Border DockPanel.Dock="Top" Background="#3308020A" Padding="10,7"
                     BorderBrush="#44FF2ECB" BorderThickness="0,0,0,1">
               <TextBlock Text="{Binding ActivityTitle}" FontFamily="Consolas" FontSize="12"
                          FontWeight="Bold" Foreground="#FFFF2ECB"/>
@@ -50,8 +51,8 @@
         </Border>
 
         <Border Width="440" MaxHeight="180" CornerRadius="6"
-                BorderBrush="#66FF2ECB" BorderThickness="1" Background="#CC08020A"
-                Visibility="{Binding ImmersiveLiveVisibility}">
+                BorderBrush="#66FF2ECB" BorderThickness="1" Background="#5508020A"
+                Visibility="{Binding ImmersiveLiveVisibility}" Opacity="0.9">
           <DockPanel>
             <TextBlock DockPanel.Dock="Top" Text="◈ KAMERA" FontFamily="Consolas" FontSize="11"
                        Foreground="#FFFF2ECB" Margin="8,6,8,4"/>
@@ -60,9 +61,9 @@
         </Border>
       </StackPanel>
 
-      <!-- Apakša: jautājuma rinda -->
+      <!-- Apakša: jautājuma rinda (caurspīdīga) -->
       <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
-              Background="#AA08020A" Padding="24,10,24,18">
+              Background="#6608020A" Padding="24,10,24,18">
         <StackPanel MaxWidth="920" HorizontalAlignment="Center">
           <DockPanel>
             <TextBlock DockPanel.Dock="Left" Text="▌" FontFamily="Consolas" FontSize="20"
