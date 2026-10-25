@@ -10,7 +10,8 @@ def test_face_app_source_is_runnable_script():
     src = face_recognition_app_source()
     assert "VideoCapture" in src
     assert "haarcascade" in src
-    assert "enrolled_faces" in src
+    assert "enroll" in src.lower()
+    assert "recognize" in src.lower()
 
 
 def test_describe_without_image_file(tmp_path):

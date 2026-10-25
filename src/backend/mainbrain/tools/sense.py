@@ -238,74 +238,49 @@ def speak_text(text: str, *, lang: str = "lv") -> dict[str, Any]:
 
 
 def face_recognition_app_source() -> str:
-    """Gatavs lokāls OpenCV sejas noteikšanas / «atpazīšanas» skripts (bez mākoņa)."""
-    return '''\
-"""
-Main Brain OS — lokāla sejas noteikšana ar kameru (OpenCV).
-Piezīme: īsta 1:N «atpazīšana» (vārdu datubāze) prasa enrollēt sejas embeddings;
-šis starts detektē sejas reāllaikā un var saglabāt kadrus enroll mapei.
-"""
-from __future__ import annotations
-
-import time
-from pathlib import Path
-
-import cv2
-
-ENROLL_DIR = Path("enrolled_faces")
-ENROLL_DIR.mkdir(exist_ok=True)
-
-
-def main() -> None:
-    cascade = cv2.CascadeClassifier(
-        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    """Pilna lokālā sejas atpazīšanas programma (enroll + recognize)."""
+    # Preferē repo apps/face_recognition/face_app.py
+    # sense.py → tools → mainbrain → backend → src → repo root
+    repo = Path(__file__).resolve().parents[4]
+    candidates = [
+        repo / "apps" / "face_recognition" / "face_app.py",
+        Path.cwd() / "apps" / "face_recognition" / "face_app.py",
+    ]
+    for path in candidates:
+        if path.is_file():
+            return path.read_text(encoding="utf-8")
+    return (
+        'raise SystemExit("Trūkst apps/face_recognition/face_app.py — git pull")\n'
     )
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        raise SystemExit("Kamera nav pieejama")
 
-    print("Q = iziet | S = saglabāt seju enroll mapei")
-    while True:
-        ok, frame = cap.read()
-        if not ok:
+
+def copy_face_recognition_app(dest_dir: str | Path) -> dict[str, Any]:
+    """Nokopē gatavu face recognition app uz darba mapi."""
+    import shutil
+
+    dest = Path(dest_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+    src_root = None
+    repo = Path(__file__).resolve().parents[4]
+    for cand in (
+        repo / "apps" / "face_recognition",
+        Path.cwd() / "apps" / "face_recognition",
+    ):
+        if cand.is_dir() and (cand / "face_app.py").is_file():
+            src_root = cand
             break
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = cascade.detectMultiScale(gray, 1.1, 5, minSize=(60, 60))
-        for (x, y, w, h) in faces:
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 120), 2)
-            cv2.putText(
-                frame,
-                "Face",
-                (x, y - 8),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 255, 120),
-                2,
-            )
-        cv2.putText(
-            frame,
-            f"Faces: {len(faces)}",
-            (12, 28),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (0, 255, 160),
-            2,
-        )
-        cv2.imshow("Main Brain — Face Camera", frame)
-        key = cv2.waitKey(1) & 0xFF
-        if key in (ord("q"), ord("Q"), 27):
-            break
-        if key in (ord("s"), ord("S")) and len(faces):
-            x, y, w, h = faces[0]
-            crop = frame[y : y + h, x : x + w]
-            out = ENROLL_DIR / f"face_{int(time.time())}.jpg"
-            cv2.imwrite(str(out), crop)
-            print("Saglabāts:", out)
+    if src_root is None:
+        # fallback — tikai galvenais skripts
+        app = dest / "face_app.py"
+        app.write_text(face_recognition_app_source(), encoding="utf-8")
+        (dest / "requirements.txt").write_text("opencv-python>=4.8\nnumpy>=1.26\n", encoding="utf-8")
+        return {"ok": True, "path": str(dest), "files": [str(app)], "mode": "inline"}
 
-    cap.release()
-    cv2.destroyAllWindows()
-
-
-if __name__ == "__main__":
-    main()
-'''
+    copied: list[str] = []
+    for name in ("face_app.py", "requirements.txt", "README_LV.md", "RUN_FACE_APP.bat"):
+        src = src_root / name
+        if src.is_file():
+            target = dest / name
+            shutil.copy2(src, target)
+            copied.append(str(target))
+    return {"ok": True, "path": str(dest), "files": copied, "mode": "copy"}
