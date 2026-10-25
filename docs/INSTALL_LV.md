@@ -1,5 +1,23 @@
 # Uzstādīšana (latviešu)
 
+## Ja START_MAINBRAIN.bat “saplīst” (daudz “is not recognized”)
+
+Vecā versija ar Unix `LF` rindu galiem Windows CMD salauž. Atjauniniet `main` un palaidiet no jauna:
+
+```powershell
+git checkout main
+git pull
+.\START_MAINBRAIN.bat
+```
+
+Vai tieši PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_mainbrain.ps1
+```
+
+Izvēlieties **[4]** (GGUF light + palaist).
+
 ## Prasības
 
 - Windows 10/11 x64 (prioritāri Windows 11)
