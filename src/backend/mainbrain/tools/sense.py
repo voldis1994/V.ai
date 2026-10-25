@@ -183,8 +183,14 @@ def image_to_data_url(path: str, *, max_side: int = 768) -> str | None:
     return f"data:image/jpeg;base64,{b64}"
 
 
+# Microsoft latviešu neirālās balsis (Edge Read Aloud — bez Azure atslēgas)
+LV_VOICE_FEMALE = "lv-LV-EveritaNeural"
+LV_VOICE_MALE = "lv-LV-NilsNeural"
+DEFAULT_LV_VOICE = LV_VOICE_FEMALE
+
+
 def _lv_phonetic_for_en_voice(text: str) -> str:
-    """Ja nav latviešu SAPI balss — aptuvena fonētika angļu balsij."""
+    """Ja nav latviešu balss — aptuvena fonētika angļu SAPI balsij."""
     repl = (
         ("č", "ch"), ("Č", "Ch"),
         ("š", "sh"), ("Š", "Sh"),
@@ -204,8 +210,179 @@ def _lv_phonetic_for_en_voice(text: str) -> str:
     return out
 
 
-def speak_text(text: str, *, lang: str = "lv") -> dict[str, Any]:
-    """Lokāla runāšana: Windows SAPI (LV balss ja ir), citādi espeak/spd-say."""
+def _speak_edge_tts(text: str, *, voice: str = DEFAULT_LV_VOICE) -> dict[str, Any]:
+    """Īsta latviešu balss (Everita/Nils) caur Microsoft Edge TTS — uzreiz, bez SAPI instalācijas."""
+    try:
+        import asyncio
+        import tempfile
+
+        import edge_tts
+    except ImportError:
+        return {
+            "ok": False,
+            "error": "edge-tts nav instalēts — palaid scripts\\install_latvian_voice.ps1",
+            "engine": "edge-tts",
+            "hint": "install_latvian_voice",
+        }
+
+    async def _run(chosen: str) -> Path:
+        out = Path(tempfile.gettempdir()) / "mainbrain_tts_lv.mp3"
+        communicate = edge_tts.Communicate(text, chosen)
+        # stream+write — stabilāks nekā save() dažos tīklos
+        audio = bytearray()
+        async for message in communicate.stream():
+            if message["type"] == "audio":
+                audio.extend(message["data"])
+        if not audio:
+            raise RuntimeError("NoAudioReceived")
+        out.write_bytes(bytes(audio))
+        return out
+
+    def _synth(chosen: str) -> Path:
+        try:
+            asyncio.get_running_loop()
+            nested = True
+        except RuntimeError:
+            nested = False
+        if nested:
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(lambda: asyncio.run(_run(chosen))).result(timeout=90)
+        return asyncio.run(_run(chosen))
+
+    voices = [voice]
+    if voice == LV_VOICE_FEMALE:
+        voices.append(LV_VOICE_MALE)
+    elif voice == LV_VOICE_MALE:
+        voices.append(LV_VOICE_FEMALE)
+
+    last_exc: Exception | None = None
+    path: Path | None = None
+    used_voice = voice
+    for v in voices:
+        try:
+            path = _synth(v)
+            used_voice = v
+            break
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            continue
+    if path is None:
+        return {
+            "ok": False,
+            "error": str(last_exc) if last_exc else "edge-tts failed",
+            "engine": "edge-tts",
+            "voice": voice,
+        }
+    voice = used_voice
+
+    if not path.is_file() or path.stat().st_size < 32:
+        return {"ok": False, "error": "edge-tts neatgrieza audio", "engine": "edge-tts", "voice": voice}
+
+    played = _play_audio_file(path)
+    return {
+        "ok": bool(played.get("ok")),
+        "performed": bool(played.get("ok")),
+        "engine": "edge-tts",
+        "voice": voice,
+        "path": str(path),
+        "play": played,
+    }
+
+
+def _play_audio_file(path: Path) -> dict[str, Any]:
+    """Atskaņo mp3/wav Windows / Linux."""
+    p = str(path)
+    if sys.platform.startswith("win"):
+        # Windows Media Player COM — spēlē mp3 bez papildu pip
+        ps = (
+            f"$p = '{p.replace(chr(39), chr(39)+chr(39))}'; "
+            "$player = New-Object -ComObject WMPlayer.OCX; "
+            "$media = $player.newMedia($p); "
+            "$player.currentMedia = $media; "
+            "$player.controls.play(); "
+            "while ($player.playState -eq 3) { Start-Sleep -Milliseconds 200 }; "
+            "$player.close()"
+        )
+        try:
+            completed = subprocess.run(
+                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+            if completed.returncode == 0:
+                return {"ok": True, "via": "WMPlayer"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+        # Fallback: start file (atver ārējo atskaņotāju)
+        try:
+            os.startfile(p)  # type: ignore[attr-defined]
+            return {"ok": True, "via": "startfile"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+
+    for cmd in (
+        ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", p],
+        ["mpv", "--no-video", p],
+        ["paplay", p],
+        ["afplay", p],
+    ):
+        try:
+            completed = subprocess.run(cmd, capture_output=True, text=True, timeout=180, check=False)
+            if completed.returncode == 0:
+                return {"ok": True, "via": cmd[0]}
+        except FileNotFoundError:
+            continue
+        except Exception:  # noqa: BLE001
+            continue
+    return {"ok": False, "error": "Nav audio atskaņotāja"}
+
+
+def _speak_sapi_windows(text: str, *, lang: str = "lv") -> dict[str, Any]:
+    phonetic = _lv_phonetic_for_en_voice(text) if lang.startswith("lv") else text
+    raw_b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    pho_b64 = base64.b64encode(phonetic.encode("utf-8")).decode("ascii")
+    ps = (
+        "Add-Type -AssemblyName System.Speech; "
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        "$s.Rate = -1; "
+        "$voices = @($s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo }); "
+        "$lv = $voices | Where-Object { "
+        "  $_.Culture.Name -like 'lv*' -or $_.Name -match 'Latvi' "
+        "} | Select-Object -First 1; "
+        f"$raw = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{raw_b64}')); "
+        f"$pho = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{pho_b64}')); "
+        "if ($lv) { $s.SelectVoice($lv.Name); $s.Speak($raw) } "
+        "else { "
+        "  $en = $voices | Where-Object { $_.Culture.Name -like 'en*' } | Select-Object -First 1; "
+        "  if ($en) { $s.SelectVoice($en.Name) }; "
+        "  $s.Speak($pho) "
+        "}"
+    )
+    encoded = base64.b64encode(ps.encode("utf-16le")).decode("ascii")
+    try:
+        completed = subprocess.run(
+            ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-EncodedCommand", encoded],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        return {
+            "ok": completed.returncode == 0,
+            "performed": completed.returncode == 0,
+            "engine": "System.Speech",
+            "stderr": (completed.stderr or "")[-400:],
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc), "engine": "System.Speech"}
+
+
+def speak_text(text: str, *, lang: str = "lv", voice: str | None = None) -> dict[str, Any]:
+    """Runā: 1) latviešu Everita/Nils (edge-tts) 2) lokālā SAPI 3) espeak."""
     t = (text or "").strip()
     if not t:
         return {"ok": False, "error": "Tukšs teksts"}
@@ -213,47 +390,22 @@ def speak_text(text: str, *, lang: str = "lv") -> dict[str, Any]:
         t = t[:800] + "…"
     t = " ".join(t.split())
 
-    if sys.platform.startswith("win"):
-        # Preferē latviešu balsi; ja nav — fonētika angļu balsij
-        phonetic = _lv_phonetic_for_en_voice(t) if lang.startswith("lv") else t
-        raw_b64 = base64.b64encode(t.encode("utf-8")).decode("ascii")
-        pho_b64 = base64.b64encode(phonetic.encode("utf-8")).decode("ascii")
-        ps = (
-            "Add-Type -AssemblyName System.Speech; "
-            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-            "$s.Rate = -1; "
-            "$voices = @($s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo }); "
-            "$lv = $voices | Where-Object { "
-            "  $_.Culture.Name -like 'lv*' -or $_.Name -match 'Latvi' "
-            "} | Select-Object -First 1; "
-            f"$raw = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{raw_b64}')); "
-            f"$pho = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{pho_b64}')); "
-            "if ($lv) { $s.SelectVoice($lv.Name); $s.Speak($raw) } "
-            "else { "
-            "  $en = $voices | Where-Object { $_.Culture.Name -like 'en*' } | Select-Object -First 1; "
-            "  if ($en) { $s.SelectVoice($en.Name) }; "
-            "  $s.Speak($pho) "
-            "}"
-        )
-        encoded = base64.b64encode(ps.encode("utf-16le")).decode("ascii")
-        try:
-            completed = subprocess.run(
-                ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-EncodedCommand", encoded],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=False,
-            )
-            return {
-                "ok": completed.returncode == 0,
-                "performed": completed.returncode == 0,
-                "engine": "System.Speech",
-                "stderr": (completed.stderr or "")[-400:],
-            }
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": str(exc), "engine": "System.Speech"}
+    # 1) Īsta latviešu neirālā balss — uzreiz, bez Windows valodas pakotnes
+    if lang.startswith("lv"):
+        chosen = voice or DEFAULT_LV_VOICE
+        edge = _speak_edge_tts(t, voice=chosen)
+        if edge.get("ok"):
+            return edge
 
+    # 2) Windows SAPI (ja ir LV pakotne / citādi fonētika)
+    if sys.platform.startswith("win"):
+        sapi = _speak_sapi_windows(t, lang=lang)
+        if sapi.get("ok"):
+            return sapi
+
+    # 3) espeak u.c.
     for cmd in (
+        ["espeak-ng", "-v", "lv" if lang.startswith("lv") else "en", t],
         ["espeak", "-v", "lv" if lang.startswith("lv") else "en", t],
         ["spd-say", t],
         ["say", t],
@@ -266,10 +418,11 @@ def speak_text(text: str, *, lang: str = "lv") -> dict[str, Any]:
             continue
         except Exception:  # noqa: BLE001
             continue
-    return {
-        "ok": False,
-        "error": "Nav TTS dzinēja (Windows SAPI / espeak). Audio atbilde nav iespējama.",
-    }
+
+    err = "Nav TTS. Palaid scripts\\install_latvian_voice.ps1 (Everita latviešu balss)."
+    if lang.startswith("lv"):
+        return {"ok": False, "error": err, "engine": "edge-tts", "hint": "install_latvian_voice"}
+    return {"ok": False, "error": err}
 
 
 def face_recognition_app_source() -> str:

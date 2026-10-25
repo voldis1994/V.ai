@@ -21,9 +21,15 @@ Write-Host "Installing opencv-python-headless (camera + faces)..."
 & $py -m pip install --upgrade "opencv-python-headless>=4.8"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+Write-Host "Installing edge-tts (latviešu Everita / Nils balsis)..."
+& $py -m pip install --upgrade "edge-tts>=6.1"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 & $py -c "import cv2; print('OpenCV', cv2.__version__, 'OK')"
+& $py -c "import edge_tts; print('edge-tts OK — Everita latviešu balss')"
 Write-Host ""
 Write-Host "Done. Try in Main Brain:" -ForegroundColor Green
 Write-Host "  ko tu redzi kamerā"
 Write-Host "  izveido sejas atpazīšanas programmu"
 Write-Host "  pasaki sveiki"
+Write-Host "  (vai scripts\install_latvian_voice.ps1 — tikai balsij)"

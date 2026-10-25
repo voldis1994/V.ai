@@ -585,7 +585,7 @@ public partial class MainViewModel : ObservableObject
         return t;
     }
 
-    /// <summary>Latviešu → aptuvena fonētika, ja nav LV SAPI balss.</summary>
+    /// <summary>Latviešu → aptuvena fonētika, ja nav LV balss (tikai SAPI fallback).</summary>
     private static string LatvianPhonetic(string text)
     {
         var map = new (string a, string b)[]
@@ -606,25 +606,48 @@ public partial class MainViewModel : ObservableObject
         return t;
     }
 
-    /// <summary>Windows SAPI: LV balss ja ir, citādi EN + fonētika.</summary>
-    private static void SpeakLocal(string text)
+    /// <summary>Primāri Everita (backend /speak); SAPI — tikai ja tīkls/edge-tts nav.</summary>
+    private void SpeakLocal(string text)
+    {
+        var t = HumanizeReply(text);
+        t = Regex.Replace(t, @"\s+", " ").Trim();
+        if (string.IsNullOrWhiteSpace(t))
+        {
+            return;
+        }
+
+        if (t.Length > 500)
+        {
+            t = t[..500] + "…";
+        }
+
+        _ = SpeakViaBackendOrSapiAsync(t);
+    }
+
+    private async Task SpeakViaBackendOrSapiAsync(string text)
     {
         try
         {
-            var t = HumanizeReply(text);
-            t = Regex.Replace(t, @"\s+", " ").Trim();
-            if (string.IsNullOrWhiteSpace(t))
+            // Microsoft Everita — īsta latviešu balss
+            if (await _api.SpeakAsync(text, "lv", "lv-LV-EveritaNeural"))
             {
                 return;
             }
+        }
+        catch
+        {
+            // fall through
+        }
 
-            if (t.Length > 500)
-            {
-                t = t[..500] + "…";
-            }
+        SpeakSapiFallback(text);
+    }
 
-            var rawB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(t));
-            var phoB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(LatvianPhonetic(t)));
+    private static void SpeakSapiFallback(string text)
+    {
+        try
+        {
+            var rawB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(text));
+            var phoB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(LatvianPhonetic(text)));
             var script =
                 "Add-Type -AssemblyName System.Speech; " +
                 "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; " +

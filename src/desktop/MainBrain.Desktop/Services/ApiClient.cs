@@ -102,6 +102,43 @@ public sealed class ApiClient
     public async Task PauseAsync() => await _http.PostAsync("/control/pause", null);
     public async Task ResumeAsync() => await _http.PostAsync("/control/resume", null);
 
+    /// <summary>Latviešu balss (Everita/Nils) caur backend /speak.</summary>
+    public async Task<bool> SpeakAsync(string text, string lang = "lv", string? voice = null)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        try
+        {
+            var payload = new Dictionary<string, string?>
+            {
+                ["text"] = text.Length > 800 ? text[..800] : text,
+                ["lang"] = lang,
+                ["voice"] = voice,
+            };
+            using var resp = await _http.PostAsJsonAsync("/speak", payload, JsonOptions);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return false;
+            }
+
+            await using var stream = await resp.Content.ReadAsStreamAsync();
+            using var doc = await JsonDocument.ParseAsync(stream);
+            if (doc.RootElement.TryGetProperty("ok", out var ok))
+            {
+                return ok.ValueKind == JsonValueKind.True;
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public async Task<List<ApprovalRequestDto>> GetApprovalsAsync()
     {
         return await _http.GetFromJsonAsync<List<ApprovalRequestDto>>("/approvals", JsonOptions) ?? new();

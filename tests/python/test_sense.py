@@ -1,8 +1,11 @@
 from mainbrain.tools.sense import (
+    DEFAULT_LV_VOICE,
+    LV_VOICE_FEMALE,
     describe_image_basic,
     face_recognition_app_source,
     opencv_available,
     speak_text,
+    _lv_phonetic_for_en_voice,
 )
 
 
@@ -23,6 +26,13 @@ def test_describe_without_image_file(tmp_path):
 
 def test_speak_empty():
     assert speak_text("").get("ok") is False
+
+
+def test_latvian_voice_constants():
+    assert DEFAULT_LV_VOICE == "lv-LV-EveritaNeural"
+    assert LV_VOICE_FEMALE.startswith("lv-LV-")
+    assert "aa" in _lv_phonetic_for_en_voice("mācos")
+    assert "sh" in _lv_phonetic_for_en_voice("šis")
 
 
 def test_opencv_flag_is_bool():

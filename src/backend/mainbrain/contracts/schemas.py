@@ -286,6 +286,12 @@ class ChatRequest(BaseModel):
     force_execute: bool | None = None
 
 
+class SpeakRequest(BaseModel):
+    text: str
+    lang: str = "lv"
+    voice: str | None = None  # lv-LV-EveritaNeural | lv-LV-NilsNeural
+
+
 class ChatResponse(BaseModel):
     reply: str
     mode: str = "chat"  # chat | execute | act

@@ -20,6 +20,7 @@ from mainbrain.contracts.schemas import (
     ChatRequest,
     ModelHealth,
     RunGoalRequest,
+    SpeakRequest,
     ToolRequest,
 )
 from mainbrain.core.config import Settings, get_settings
@@ -193,6 +194,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload = response.model_dump(mode="json")
         await _broadcast(st, {"type": "chat", "data": {"mode": response.mode, "session_id": response.session_id}})
         return payload
+
+    @app.post("/speak", dependencies=[Depends(require_auth)])
+    async def speak(body: SpeakRequest) -> dict[str, Any]:
+        """Latviešu balss (Everita/Nils caur edge-tts) — Desktop Voice atbildes."""
+        if not (body.text or "").strip():
+            raise HTTPException(400, "Tukšs teksts")
+        from mainbrain.tools.sense import speak_text
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: speak_text(body.text, lang=body.lang or "lv", voice=body.voice),
+        )
 
     @app.post("/tools/execute", dependencies=[Depends(require_auth)])
     async def execute_tool(body: ToolRequest, st: AppState = Depends(state)) -> dict[str, Any]:
