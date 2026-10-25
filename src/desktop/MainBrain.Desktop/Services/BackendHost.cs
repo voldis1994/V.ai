@@ -38,6 +38,10 @@ public sealed class BackendHost : IDisposable
         TryStartLlamaServer(dataDir);
 
         var root = ResolveAppRoot();
+        EnsureBackendHasChat(root);
+        // Vecs python process uz 8765 = 404 uz /chat — atbrīvo portu
+        await FreePortAsync(8765);
+
         var python = ResolvePython(root);
         var psi = new ProcessStartInfo
         {
@@ -58,7 +62,12 @@ public sealed class BackendHost : IDisposable
 
         var backendPath = Path.Combine(root, "backend");
         var srcBackend = Path.Combine(root, "src", "backend");
-        if (Directory.Exists(backendPath))
+        // Preferē src (jaunākais), tad release backend
+        if (Directory.Exists(srcBackend) && File.Exists(Path.Combine(srcBackend, "mainbrain", "brain", "chat.py")))
+        {
+            psi.Environment["PYTHONPATH"] = srcBackend;
+        }
+        else if (Directory.Exists(backendPath))
         {
             psi.Environment["PYTHONPATH"] = backendPath;
         }
@@ -70,14 +79,36 @@ public sealed class BackendHost : IDisposable
         _process = Process.Start(psi);
 
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-        for (var i = 0; i < 60; i++)
+        for (var i = 0; i < 80; i++)
         {
             try
             {
                 var resp = await client.GetAsync($"{BaseUrl}/health");
-                if (resp.IsSuccessStatusCode)
+                if (!resp.IsSuccessStatusCode)
+                {
+                    await Task.Delay(250);
+                    continue;
+                }
+
+                var json = await resp.Content.ReadAsStringAsync();
+                // Ja vecs backend bez chat — mēģina restartēt ar src
+                if (json.Contains("\"chat\"", StringComparison.Ordinal) ||
+                    json.Contains("1.2", StringComparison.Ordinal))
                 {
                     return;
+                }
+
+                // vecs process — nogalina un startē vēlreiz no src
+                if (i > 8 && Directory.Exists(srcBackend))
+                {
+                    await FreePortAsync(8765);
+                    if (_process is not null && !_process.HasExited)
+                    {
+                        try { _process.Kill(entireProcessTree: true); } catch { /* ignore */ }
+                    }
+
+                    psi.Environment["PYTHONPATH"] = srcBackend;
+                    _process = Process.Start(psi);
                 }
             }
             catch
@@ -89,7 +120,77 @@ public sealed class BackendHost : IDisposable
         }
 
         throw new InvalidOperationException(
-            "Backend nestartējās. Pārbaudiet Python instalāciju un laidiena backend mapi.");
+            "Backend nestartējās vai ir pārāk vecs (nav /chat). Palaidiet setup_full.ps1 vēlreiz.");
+    }
+
+    private static void EnsureBackendHasChat(string root)
+    {
+        var srcChat = Path.Combine(root, "src", "backend", "mainbrain", "brain", "chat.py");
+        var relChat = Path.Combine(root, "backend", "mainbrain", "brain", "chat.py");
+        if (!File.Exists(srcChat))
+        {
+            // maybe root IS src/backend parent already handled
+            return;
+        }
+
+        if (!File.Exists(relChat))
+        {
+            try
+            {
+                var destDir = Path.GetDirectoryName(relChat)!;
+                Directory.CreateDirectory(destDir);
+                // sync whole mainbrain package into release backend
+                var srcPkg = Path.Combine(root, "src", "backend", "mainbrain");
+                var dstPkg = Path.Combine(root, "backend", "mainbrain");
+                if (Directory.Exists(srcPkg))
+                {
+                    CopyDirectory(srcPkg, dstPkg);
+                }
+            }
+            catch
+            {
+                // best-effort
+            }
+        }
+    }
+
+    private static void CopyDirectory(string src, string dst)
+    {
+        Directory.CreateDirectory(dst);
+        foreach (var file in Directory.GetFiles(src, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(src, file);
+            var target = Path.Combine(dst, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(file, target, overwrite: true);
+        }
+    }
+
+    private static async Task FreePortAsync(int port)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c for /f \"tokens=5\" %a in ('netstat -ano ^| findstr :{port} ^| findstr LISTENING') do taskkill /F /PID %a",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            using var p = Process.Start(psi);
+            if (p is not null)
+            {
+                await p.WaitForExitAsync();
+            }
+        }
+        catch
+        {
+            // ignore — port may already be free
+        }
+
+        await Task.Delay(400);
     }
 
     public async Task StopAsync()

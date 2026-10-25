@@ -43,7 +43,27 @@ public sealed class ApiClient
     public async Task<ChatResponseDto> ChatAsync(ChatRequestDto request)
     {
         var resp = await _http.PostAsJsonAsync("/chat", request, JsonOptions);
-        resp.EnsureSuccessStatusCode();
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return new ChatResponseDto
+            {
+                Reply =
+                    "Backend ir vecs (nav /chat). Aizveriet MainBrain.exe, palaidiet setup_full.ps1 " +
+                    "no jaunākā main, tad atveriet programmu no jauna.",
+                Mode = "error",
+            };
+        }
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            var body = await resp.Content.ReadAsStringAsync();
+            return new ChatResponseDto
+            {
+                Reply = $"API kļūda {(int)resp.StatusCode}: {body}",
+                Mode = "error",
+            };
+        }
+
         return await resp.Content.ReadFromJsonAsync<ChatResponseDto>(JsonOptions)
                ?? new ChatResponseDto { Reply = "(tukša atbilde)" };
     }
