@@ -4,13 +4,18 @@
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         xmlns:ctrl="clr-namespace:MainBrain.Desktop.Controls"
         Title="{Binding Title}"
+        WindowStyle="None"
         WindowState="Maximized"
+        ResizeMode="NoResize"
+        Topmost="True"
         WindowStartupLocation="CenterScreen"
         Background="#020608"
-        Foreground="{StaticResource TextBrush}">
+        Foreground="{StaticResource TextBrush}"
+        KeyDown="Window_OnKeyDown">
   <Grid>
-    <!-- MATRIX LAYER (full window) -->
-    <ctrl:MatrixRainCanvas x:Name="MatrixBg" Panel.ZIndex="0"/>
+    <!-- MATRIX: kustas visu laiku; pazūd tikai kad AI atbild -->
+    <ctrl:MatrixRainCanvas x:Name="MatrixBg" Panel.ZIndex="0"
+                           Visibility="{Binding MatrixRainVisibility}"/>
 
     <Grid Panel.ZIndex="1">
       <Grid.RowDefinitions>
@@ -82,13 +87,25 @@
         </Border>
 
         <Grid Visibility="{Binding FocusVisibility}">
-          <!-- MATRIX CHAT -->
-          <Border Visibility="{Binding HomeVisibility}" Background="#66010406" Padding="28">
-            <Border BorderBrush="#3300FF88" BorderThickness="1" Padding="18" MaxWidth="960" HorizontalAlignment="Center">
+          <!-- Chat: caurspīdīgs kad Matrix redzams; skaidrāks kad AI atbild -->
+          <Border Visibility="{Binding HomeVisibility}" Padding="28">
+            <Border.Style>
+              <Style TargetType="Border">
+                <Setter Property="Background" Value="#22010406"/>
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding ShowMatrixRain}" Value="False">
+                    <Setter Property="Background" Value="#EE020608"/>
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </Border.Style>
+            <Border BorderBrush="#4400FF88" BorderThickness="1" Padding="18" MaxWidth="960"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Background="#99020408">
               <Border.Effect>
-                <DropShadowEffect Color="#00FF88" BlurRadius="24" ShadowDepth="0" Opacity="0.25"/>
+                <DropShadowEffect Color="#00FF88" BlurRadius="24" ShadowDepth="0" Opacity="0.35"/>
               </Border.Effect>
-              <ctrl:MatrixTypewriterBox FullText="{Binding ChatOutput}" FontSize="17"/>
+              <ctrl:MatrixTypewriterBox FullText="{Binding ChatOutput}" FontSize="17" MinHeight="120"/>
             </Border>
           </Border>
 

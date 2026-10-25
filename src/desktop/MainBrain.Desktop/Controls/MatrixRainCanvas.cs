@@ -26,18 +26,45 @@ public sealed class MatrixRainCanvas : FrameworkElement
     {
         IsHitTestVisible = false;
         SnapsToDevicePixels = true;
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
+        // ~60 FPS — skaidri redzama nepārtraukta kustība
+        _timer = new DispatcherTimer(DispatcherPriority.Render)
+        {
+            Interval = TimeSpan.FromMilliseconds(16),
+        };
         _timer.Tick += (_, _) =>
         {
+            if (Visibility != Visibility.Visible || Opacity < 0.05)
+            {
+                return;
+            }
+
             Tick();
             InvalidateVisual();
         };
         Loaded += (_, _) =>
         {
-            Init();
+            if (ActualWidth > 10)
+            {
+                _size = new Size(ActualWidth, ActualHeight);
+            }
+
+            Init(force: true);
             _timer.Start();
         };
         Unloaded += (_, _) => _timer.Stop();
+        IsVisibleChanged += (_, _) =>
+        {
+            if (IsVisible)
+            {
+                if (ActualWidth > 10)
+                {
+                    _size = new Size(ActualWidth, ActualHeight);
+                    Init(force: true);
+                }
+
+                _timer.Start();
+            }
+        };
         SizeChanged += (_, e) =>
         {
             _size = e.NewSize;
@@ -59,13 +86,13 @@ public sealed class MatrixRainCanvas : FrameworkElement
 
         _drops.Clear();
         _floaters.Clear();
-        var cols = Math.Max(12, (int)(_size.Width / 18));
+        var cols = Math.Max(24, (int)(_size.Width / 14));
         for (var i = 0; i < cols; i++)
         {
-            _drops.Add(NewDrop(i * 18 + _rng.NextDouble() * 6, spawnTop: true));
+            _drops.Add(NewDrop(i * 14 + _rng.NextDouble() * 4, spawnTop: true));
         }
 
-        for (var i = 0; i < 40; i++)
+        for (var i = 0; i < 70; i++)
         {
             _floaters.Add(NewFloater());
         }
@@ -86,7 +113,7 @@ public sealed class MatrixRainCanvas : FrameworkElement
         {
             X = x,
             Y = spawnTop ? -_rng.Next(0, (int)_size.Height) : -_rng.Next(40, 400),
-            Speed = 2.2 + _rng.NextDouble() * 6.5,
+            Speed = 4.5 + _rng.NextDouble() * 11.0,
             Chars = chars,
             Head = 0,
         };

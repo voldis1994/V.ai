@@ -24,6 +24,10 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _chatOutput = "";
     [ObservableProperty] private string _chatSessionId = "ui";
     [ObservableProperty] private bool _isThinking;
+    /// <summary>Matrix lietus redzams visu laiku, izņemot kad AI atbild.</summary>
+    [ObservableProperty] private bool _showMatrixRain = true;
+
+    public Visibility MatrixRainVisibility => ShowMatrixRain ? Visibility.Visible : Visibility.Collapsed;
     [ObservableProperty] private string _terminalOutput = "";
     [ObservableProperty] private AgentDefinitionDto? _selectedAgent;
     [ObservableProperty] private string _inspectorText = "Izvēlieties aģentu vai palaidiet uzdevumu.";
@@ -142,6 +146,7 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnShowAgentsChanged(bool value) => OnPropertyChanged(nameof(AgentsVisibility));
     partial void OnShowInspectorChanged(bool value) => OnPropertyChanged(nameof(InspectorVisibility));
+    partial void OnShowMatrixRainChanged(bool value) => OnPropertyChanged(nameof(MatrixRainVisibility));
 
     private void NotifyWorkspaceVisibilities()
     {
@@ -235,6 +240,8 @@ public partial class MainViewModel : ObservableObject
         ChatInput = "";
         ActiveJobs++;
         IsThinking = true;
+        // Matrix pazūd, kamēr AI atbild
+        ShowMatrixRain = false;
         if (string.IsNullOrWhiteSpace(ChatOutput))
         {
             ChatOutput = $"Tu: {userText}";
@@ -264,16 +271,37 @@ public partial class MainViewModel : ObservableObject
                 InspectorText = $"Uzdevums: {result.GoalStatus}";
             }
             OnPropertyChanged(nameof(ApprovalsVisibility));
+
+            // Ļaujam typewriter pabeigt, tad Matrix atgriežas
+            var revealMs = Math.Clamp((result.Reply?.Length ?? 20) * 8, 800, 6000);
+            _ = RestoreMatrixAfterAsync(revealMs);
         }
         catch (Exception ex)
         {
             ChatOutput += "\nMain Brain: Kļūda — " + ex.Message;
+            ShowMatrixRain = true;
         }
         finally
         {
             IsThinking = false;
             ActiveJobs = Math.Max(0, ActiveJobs - 1);
             await RefreshApprovalsAsync();
+        }
+    }
+
+    private async Task RestoreMatrixAfterAsync(int delayMs)
+    {
+        try
+        {
+            await Task.Delay(delayMs);
+            if (!IsThinking)
+            {
+                ShowMatrixRain = true;
+            }
+        }
+        catch
+        {
+            ShowMatrixRain = true;
         }
     }
 

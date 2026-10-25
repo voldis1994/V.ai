@@ -9,11 +9,63 @@ namespace MainBrain.Desktop;
 
 public partial class MainWindow : Window
 {
+    private bool _trueFullscreen = true;
+
     public MainWindow()
     {
         InitializeComponent();
-        WindowState = WindowState.Maximized;
+        EnterFullscreen();
         Loaded += OnLoaded;
+    }
+
+    private void EnterFullscreen()
+    {
+        _trueFullscreen = true;
+        WindowStyle = WindowStyle.None;
+        ResizeMode = ResizeMode.NoResize;
+        Topmost = true;
+        WindowState = WindowState.Maximized;
+    }
+
+    private void ExitFullscreen()
+    {
+        _trueFullscreen = false;
+        Topmost = false;
+        WindowStyle = WindowStyle.SingleBorderWindow;
+        ResizeMode = ResizeMode.CanResize;
+        WindowState = WindowState.Maximized;
+    }
+
+    private void Window_OnKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            if (_trueFullscreen)
+            {
+                ExitFullscreen();
+            }
+            else
+            {
+                EnterFullscreen();
+            }
+
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.F11)
+        {
+            if (_trueFullscreen)
+            {
+                ExitFullscreen();
+            }
+            else
+            {
+                EnterFullscreen();
+            }
+
+            e.Handled = true;
+        }
     }
 
     private void ChatBox_OnKeyDown(object sender, KeyEventArgs e)
