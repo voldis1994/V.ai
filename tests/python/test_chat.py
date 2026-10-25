@@ -100,3 +100,37 @@ def test_chat_endpoint(tmp_path: Path):
         assert resp2.status_code == 200
         reply = resp2.json()["reply"].lower()
         assert "gaidis" not in reply
+
+
+def test_chat_create_hello_world_no_500(tmp_path: Path):
+    """Ekrānšāviņa kļūda: VerificationReport.summary → nedrīkst mest 500."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        api_token="test-token",
+        workspace_root=tmp_path,
+    )
+    settings.ensure_dirs()
+    app = create_app(settings)
+    with TestClient(app) as client:
+        client.headers.update({"Authorization": "Bearer test-token"})
+        resp = client.post(
+            "/chat",
+            json={
+                "message": "izveido python kodu hello world",
+                "session_id": "hw",
+                "workspace_path": str(project),
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["mode"] == "execute"
+        assert "summary" not in (body.get("reply") or "").lower() or "VerificationReport" not in (
+            body.get("reply") or ""
+        )
+        assert "VerificationReport" not in (body.get("reply") or "")
+        assert "no attribute" not in (body.get("reply") or "")
+        # Jābūt hello.py
+        assert (project / "hello.py").exists()
+        assert "Hello" in (project / "hello.py").read_text(encoding="utf-8")

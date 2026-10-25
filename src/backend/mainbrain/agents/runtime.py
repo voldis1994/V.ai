@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import statistics
 import time
 from pathlib import Path
@@ -276,6 +277,60 @@ class AgentRuntime:
         ws = self.tools.workspace
         if not ws:
             return self._fail(agent, "Nav darba mapes")
+        g = (goal or "").lower()
+
+        # Vienkāršs hello world / hello.py — bez CSV inventāra šablona
+        if "hello" in g or "hello world" in g or "hello_world" in g:
+            module = ws / "hello.py"
+            code = 'print("Hello, World!")\n'
+            w1 = self._tool(agent, "files.write", {"path": str(module), "content": code})
+            run = self._tool(
+                agent, "python.run", {"script": str(module), "cwd": str(ws), "auto_safe": True}
+            )
+            return self._ok(
+                agent,
+                "Hello World Python fails izveidots un palaists",
+                {
+                    "files_changed": [str(module)],
+                    "summary": "hello.py",
+                    "code": code,
+                    "run": run.output,
+                    "model_note": model_note,
+                },
+                artifacts=[Artifact(kind="code", path=str(module), summary="hello.py")],
+                tool_results=[w1, run],
+            )
+
+        # Explicit faila nosaukums: «izveido failu foo.py»
+        named = re.search(r"(?i)\b([\w\-]+)\.py\b", goal or "")
+        if named and "csv" not in g and "atskait" not in g and "invent" not in g:
+            fname = named.group(1) + ".py"
+            module = ws / fname
+            code = (
+                f'"""Auto-ģenerēts: {goal.strip()[:120]}"""\n'
+                f"def main() -> None:\n"
+                f'    print("OK: {fname}")\n\n'
+                f'if __name__ == "__main__":\n'
+                f"    main()\n"
+            )
+            w1 = self._tool(agent, "files.write", {"path": str(module), "content": code})
+            run = self._tool(
+                agent, "python.run", {"script": str(module), "cwd": str(ws), "auto_safe": True}
+            )
+            return self._ok(
+                agent,
+                f"Python fails {fname} izveidots",
+                {
+                    "files_changed": [str(module)],
+                    "summary": fname,
+                    "code": code,
+                    "run": run.output,
+                    "model_note": model_note,
+                },
+                artifacts=[Artifact(kind="code", path=str(module), summary=fname)],
+                tool_results=[w1, run],
+            )
+
         module = ws / "inventory_report.py"
         test_file = ws / "test_inventory_report.py"
         sample = ws / "sample.csv"

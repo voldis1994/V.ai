@@ -349,17 +349,56 @@ class ChatService:
                 goal = goal[len(prefix) :].strip()
                 break
 
-        result = await self.brain.run_goal(
-            RunGoalRequest(
-                text=goal,
-                workspace_path=req.workspace_path,
-                auto_approve_safe=True,
+        try:
+            result = await self.brain.run_goal(
+                RunGoalRequest(
+                    text=goal,
+                    workspace_path=req.workspace_path,
+                    auto_approve_safe=True,
+                )
             )
-        )
+        except Exception as exc:  # noqa: BLE001 — chat nedrīkst mest 500
+            err = f"Izpilde neizdevās: {exc}"
+            history.append({"role": "assistant", "content": err})
+            return ChatResponse(
+                reply=err,
+                mode="execute",
+                session_id=session,
+                goal_status="failed",
+                messages=[ChatMessage(**m) for m in history[-10:]],
+            )
+
         status = getattr(result.status, "value", str(result.status))
-        summary = f"{ack_text}\n\n[Izpilde] Statuss: {status}."
-        if result.verification and result.verification.summary:
-            summary += f" {result.verification.summary}"
+        parts = [ack_text, f"[Izpilde] Statuss: {status}."]
+
+        ver = result.verification
+        if ver is not None:
+            passed = "OK" if getattr(ver, "passed", False) else "nav OK"
+            notes = (getattr(ver, "notes", None) or "").strip()
+            parts.append(f"Verifikācija: {passed}." + (f" {notes}" if notes else ""))
+
+        arts = list(getattr(result, "artifacts", None) or [])
+        if arts:
+            paths = []
+            for a in arts[:8]:
+                p = getattr(a, "path", None) or (a.get("path") if isinstance(a, dict) else None)
+                if p:
+                    paths.append(str(p))
+            if paths:
+                parts.append("Faili:\n- " + "\n- ".join(paths))
+                # Parādi hello.py saturu, ja ir
+                for p in paths:
+                    if p.endswith((".py", ".md", ".txt", ".cs")):
+                        try:
+                            from pathlib import Path
+
+                            text = Path(p).read_text(encoding="utf-8")[:600]
+                            parts.append(f"--- {Path(p).name} ---\n{text}")
+                        except OSError:
+                            pass
+                        break
+
+        summary = "\n".join(parts)
         history.append({"role": "assistant", "content": summary})
         return ChatResponse(
             reply=summary,

@@ -205,6 +205,27 @@ class AiPlanner:
 
     def _fallback_for(self, goal_text: str) -> PlannedDag:
         text = goal_text.lower()
+        if "hello" in text or re.search(r"\b\w+\.py\b", text):
+            # Vienkāršs Python fails — bez smagas CSV plūsmas
+            return PlannedDag(
+                summary="Python faila izveide",
+                source="fallback_python_simple",
+                tasks=[
+                    PlannedTask(
+                        id="t1",
+                        title="Uzrakstīt Python failu",
+                        description=goal_text,
+                        agent_id="PythonDeveloper",
+                    ),
+                    PlannedTask(
+                        id="t2",
+                        title="Pārbaudīt rezultātu",
+                        description="Pārbaudīt izveidoto failu",
+                        agent_id="ResultReviewer",
+                        depends_on=["t1"],
+                    ),
+                ],
+            )
         if "csv" in text or "atskait" in text or "pārskat" in text:
             return FALLBACK_CSV.model_copy(deep=True)
         if "notepad" in text or "windows" in text and "tekst" in text:
