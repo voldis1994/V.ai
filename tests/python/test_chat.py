@@ -60,6 +60,26 @@ def test_is_junk_detects_gaidis_loop():
         "un uzdevumu risināšanu. Ja vēlies zaudētu informāciju..."
     )
     assert _is_junk(audio_junk)
+    privacy_junk = (
+        "Nezinu, kāds ir šī persona un ka viņš tiek izmantots internetu. "
+        "Varbiedrīgi nevaru informēt par konkrētiem cilvēkiem vai tām darbam. "
+        "Ja jums ir vajadzība saprotit, kā izmantot internetu piemēram personam, "
+        "varat man tev palīdzību ar tiem tematiem, kas tiek pieejami publiski "
+        "un atbilst noteikumiem."
+    )
+    assert _is_junk(privacy_junk)
+
+
+def test_facts_to_reply_and_duckduckgo_url():
+    from mainbrain.brain.actions import duckduckgo_url
+    from mainbrain.brain.chat import ChatService
+
+    url = duckduckgo_url("Edgars Gaidulis")
+    assert "duckduckgo.com" in url
+    assert "Edgars" in url or "Gaidulis" in url or "%20" in url or "+" in url
+    text = ChatService._facts_to_reply("X", ["Fakts viens par X no avota."])
+    assert "Fakts viens" in text
+    assert "X" in text
 
 
 def test_local_greet_without_llm():

@@ -54,26 +54,52 @@ class PhysicalActor:
         return self.tools.execute(ToolRequest(tool=tool, arguments=arguments, agent_id="PhysicalActor"))
 
     def open_url(self, url: str) -> dict[str, Any]:
-        """Atver URL iegultajā WebView2 UN sistēmas pārlūkā."""
+        """Atver URL iegultajā WebView2 UN sistēmas pārlūkā (Chrome/Edge/start)."""
         results: dict[str, Any] = {"url": url, "webview": None, "system_browser": None}
         # 1) Iegultais pārlūks (ja Desktop tilts dzīvs)
-        nav = self._exec("browser.navigate", {"url": url})
-        results["webview"] = {
-            "ok": nav.ok,
-            "output": nav.output,
-            "error": nav.error,
-        }
-        # 2) Sistēmas noklusējuma pārlūks — lietotājs REDZ logu
         try:
-            if sys.platform.startswith("win"):
-                os.startfile(url)  # type: ignore[attr-defined]
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", url])  # noqa: S603
-            else:
-                subprocess.Popen(["xdg-open", url])  # noqa: S603
-            results["system_browser"] = {"ok": True, "performed": True}
+            nav = self._exec("browser.navigate", {"url": url})
+            results["webview"] = {
+                "ok": nav.ok,
+                "output": nav.output,
+                "error": nav.error,
+            }
         except Exception as exc:  # noqa: BLE001
-            # fallback caur shell
+            results["webview"] = {"ok": False, "error": str(exc)}
+
+        # 2) Sistēmas pārlūks — vairāki mēģinājumi, lai lietotājs NOTEIKTI REDZ logu
+        launched = False
+        last_err = ""
+        if sys.platform.startswith("win"):
+            for cmd in (
+                ["cmd", "/c", "start", "", url],
+                ["cmd", "/c", "start", "msedge", url],
+                ["cmd", "/c", "start", "chrome", url],
+            ):
+                try:
+                    subprocess.Popen(cmd, shell=False)  # noqa: S603
+                    launched = True
+                    results["system_browser"] = {"ok": True, "performed": True, "via": cmd[0:3]}
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    last_err = str(exc)
+            if not launched:
+                try:
+                    os.startfile(url)  # type: ignore[attr-defined]
+                    launched = True
+                    results["system_browser"] = {"ok": True, "performed": True, "via": "startfile"}
+                except Exception as exc:  # noqa: BLE001
+                    last_err = str(exc)
+        else:
+            try:
+                opener = "open" if sys.platform == "darwin" else "xdg-open"
+                subprocess.Popen([opener, url])  # noqa: S603
+                launched = True
+                results["system_browser"] = {"ok": True, "performed": True, "via": opener}
+            except Exception as exc:  # noqa: BLE001
+                last_err = str(exc)
+
+        if not launched:
             shell = self._exec(
                 "shell.run",
                 {
@@ -84,7 +110,7 @@ class PhysicalActor:
             results["system_browser"] = {
                 "ok": shell.ok,
                 "output": shell.output,
-                "error": str(exc),
+                "error": last_err or shell.error,
             }
         return results
 

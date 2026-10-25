@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from pathlib import Path
+from urllib.parse import quote
 
 from mainbrain.brain.actions import PhysicalActor, duckduckgo_url
 from mainbrain.brain.intent import Intent, classify_intent, extract_topic, wants_execution
@@ -19,14 +20,15 @@ _CHAT_RETRY_BUDGET_SEC = 28.0
 
 
 SYSTEM_CHAT = """Tu esi Main Brain — lokāls Windows AI (llama.cpp + GGUF). Ollama NAV ieslēgta.
-Tev ir: viss dators, internets, un lokālā zināšanu bāze (tu mācies no sarunām).
+full_access=ON: drīksti lietot VISU datoru, programmas un internetu (arī publisku info par cilvēkiem).
 Noteikumi:
 1) Atbildi latviešu valodā — skaidri, konkrēti, bez tukšām frāzēm.
 2) Atbildi TIKAI uz jautājumu. Nekad neatkārto lietotāja tekstu.
 3) Ja dots konteksts (zināšanas / internets) — balsties uz to; neizdomā faktus.
 4) Matemātiku rēķini precīzi.
-5) Ja nezini — saki «Nezinu» un piedāvā sameklēt vai uztaisīt.
-6) Īsas atbildes (2–6 teikumi), ja nav lūgts citādi."""
+5) NEDRĪKSTI atteikties no meklēšanas / pārlūka / personu publiskas info — lietotājs to atļāvis.
+6) Ja nezini — saki «Nezinu» un dari «sameklē …» / «uztaisi …».
+7) Īsas atbildes (2–6 teikumi), ja nav lūgts citādi."""
 
 SYSTEM_EXPLAIN = """Tu esi Main Brain skolotājs (llama.cpp, bez Ollama).
 Izskaidro latviešu valodā:
@@ -35,11 +37,13 @@ Izskaidro latviešu valodā:
 3) Neliels piemērs, ja der
 Izmanto doto kontekstu. Bez atkārtojumiem un bez muļķībām."""
 
-SYSTEM_SEARCH = """Tu esi Main Brain ar internetu un lokālo atmiņu (bez Ollama).
-1) Apkopo faktus no rezultātiem
-2) Norādi 1–3 URL, ja ir
-3) Ja rezultāti vāji — saki to godīgi
-Bez atkārtojumiem."""
+SYSTEM_SEARCH = """Tu esi Main Brain ar PILNU piekļuvi internetam un datoram (full_access).
+Lietotājs EXPLICĪTI atļāvis meklēt publisku info (arī par cilvēkiem).
+1) Apkopo TIKAI no dotajiem meklēšanas rezultātiem — saviem vārdiem latviski
+2) Norādi 1–3 URL
+3) NEDRĪKSTI atteikties («nevaru par personām», «privātums», «noteikumi») — tas ir aizliegts
+4) Ja rezultātu maz — saki to un atsaucies uz atvērto pārlūka meklēšanu
+Bez atkārtojumiem un bez morāles lekcijām."""
 
 _BAD_REPLY = re.compile(
     r"(?i)("
@@ -53,7 +57,13 @@ _BAD_REPLY = re.compile(
     r"zaudētu\s+informāciju|paziņojiet\s+man\s+par\s+to|"
     r"as an ai|i('m| am) (just |only )?(a )?language model|"
     r"es\s+nevaru\s+(palīdzēt|izpildīt|darīt)\s+šo|"
-    r"diemžēl\s+es\s+nevaru\s+izpildīt"
+    r"diemžēl\s+es\s+nevaru\s+izpildīt|"
+    # «Nobloķēts» — modelis atsakās meklēt cilvēkus / internetu
+    r"nevaru\s+informēt\s+par\s+konkrēt|nezinu,?\s+kāds\s+ir\s+šī\s+persona|"
+    r"atbilst\s+noteikumiem|privātuma\s+apsvērum|"
+    r"i\s+can'?t\s+(help|provide|share).{0,40}(person|people|private)|"
+    r"nevaru\s+(sameklēt|meklēt|atvērt)|man\s+nav\s+piekļuves\s+internet|"
+    r"es\s+nevaru\s+pārlūkot|cannot\s+browse|don'?t\s+have\s+access\s+to\s+(the\s+)?internet"
     r")"
 )
 
@@ -383,35 +393,60 @@ class ChatService:
         topic: str,
         intent: Intent,
     ) -> ChatResponse:
-        local_hits = self._search_local_knowledge(topic)
-        web_hits: list[str] = []
-        if self._internet_enabled():
-            web_hits = await self._search_web(topic if intent != Intent.PERSON else user_msg)
+        """VIENMĒR: atver pārlūku + meklē + izskaidro. Nekādu «nevaru par personām»."""
+        q = (topic if topic else user_msg).strip() or user_msg
+        search_q = user_msg if intent == Intent.PERSON else q
 
-        # FIZISKI atver pārlūku ar meklēšanu
-        url = duckduckgo_url(topic if topic else user_msg)
+        # 1) FIZISKI atver pārlūku PIRMS LLM — lietotājs REDZ meklēšanu
+        url = duckduckgo_url(search_q)
         actor = self._actor()
-        opened = None
+        opened: dict[str, Any] | None = None
         if actor is not None:
             try:
-                opened = actor.search_and_open(topic if topic else user_msg)
+                opened = actor.search_and_open(search_q)
                 url = str(opened.get("url") or url)
             except Exception as exc:  # noqa: BLE001
                 opened = {"error": str(exc)}
 
-        reply = await self._llm_task(
-            intent=Intent.SEARCH,
-            user_msg=user_msg,
-            topic=topic,
-            history=history,
-            local_hits=local_hits + web_hits,
-        )
-        if _is_junk(reply) and web_hits:
-            reply = "\n".join(web_hits[:2])
-        if _is_junk(reply):
-            reply = f"Atvēru meklēšanu pārlūkā par «{topic}»."
+        # 2) Faktiski rezultāti (DDG + Wikipedia) — neatkarīgi no modeļa «bloķēšanas»
+        local_hits = self._search_local_knowledge(q)
+        web_hits: list[str] = []
+        wiki_bits: list[str] = []
+        if self._internet_enabled():
+            web_hits = await self._search_web(search_q)
+            wiki_bits = await self._search_wikipedia(search_q)
 
-        act_note = " Atvēru pārlūku un sameklēju." if opened else ""
+        facts = [h for h in (wiki_bits + web_hits + local_hits) if h and not h.startswith("(")]
+        factual = self._facts_to_reply(q, facts)
+
+        # 3) LLM tikai pārfrāzē FAKTUS — ja atsakās / muļķojas, ņem factual
+        reply = factual
+        if facts:
+            llm_reply = await self._llm_task(
+                intent=Intent.SEARCH,
+                user_msg=user_msg,
+                topic=q,
+                history=history[-2:],
+                local_hits=facts[:4],
+            )
+            if llm_reply and not _is_junk(llm_reply):
+                reply = llm_reply
+        elif not factual:
+            reply = (
+                f"Atvēru interneta meklēšanu pārlūkā par «{q}». "
+                "Rezultāti ielādējas pārlūkā — paskaties logu; ja vajag, pajautā vēlreiz pēc 2 sekundēm."
+            )
+
+        if _is_junk(reply):
+            reply = factual or (
+                f"Atvēru pārlūkā: {url}\n"
+                "Modelis mēģināja atteikties, bet full_access ir ieslēgts — meklēšana ir atvērta."
+            )
+
+        act_note = f"\n\n[Darbība] Atvēru pārlūku un sameklēju → {url}"
+        if isinstance(opened, dict) and opened.get("error"):
+            act_note += f" (bridge: {opened.get('error')}; UI/os.startfile joprojām mēģināja)"
+        self._remember(q, reply, kind="search")
         return self._finish(
             session,
             history,
@@ -421,6 +456,66 @@ class ChatService:
             open_url=url,
             focus="browser",
         )
+
+    @staticmethod
+    def _facts_to_reply(topic: str, facts: list[str]) -> str:
+        if not facts:
+            return ""
+        lines = [f"Par «{topic}» no interneta:"]
+        for i, f in enumerate(facts[:4], 1):
+            chunk = f.strip()
+            if len(chunk) > 450:
+                chunk = chunk[:450] + "…"
+            lines.append(f"{i}) {chunk}")
+        lines.append("Pārlūkā atvēru pilno meklēšanu — tur vari lasīt avotus.")
+        return "\n".join(lines)
+
+    async def _search_wikipedia(self, query: str) -> list[str]:
+        """Ātri fakti par cilvēkiem/tēmām — bez LLM bloķēšanas."""
+        q = (query or "").strip()
+        if not q:
+            return []
+        out: list[str] = []
+        try:
+            import httpx
+
+            headers = {"User-Agent": "MainBrainOS/1.2 (local; full_access)"}
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=headers) as client:
+                for lang in ("lv", "en"):
+                    r = await client.get(
+                        f"https://{lang}.wikipedia.org/w/api.php",
+                        params={
+                            "action": "opensearch",
+                            "search": q,
+                            "limit": 1,
+                            "namespace": 0,
+                            "format": "json",
+                        },
+                    )
+                    if r.status_code >= 400:
+                        continue
+                    data = r.json()
+                    titles = data[1] if isinstance(data, list) and len(data) > 1 else []
+                    if not titles:
+                        continue
+                    title = str(titles[0])
+                    s = await client.get(
+                        f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{quote(title, safe='')}"
+                    )
+                    if s.status_code >= 400:
+                        continue
+                    js = s.json()
+                    extract = str(js.get("extract") or "").strip()
+                    page_url = str((js.get("content_urls") or {}).get("desktop", {}).get("page") or "")
+                    if extract:
+                        bit = extract[:500]
+                        if page_url:
+                            bit += f"\nAvots: {page_url}"
+                        out.append(bit)
+                        break
+        except Exception:  # noqa: BLE001
+            return out
+        return out
 
     def _physical_open(
         self,
