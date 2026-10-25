@@ -91,7 +91,7 @@ public sealed class MatrixTypewriterBox : TextBox
         // occasional glyph flicker on the newest char
         if (_index > _stableLength && _index < _target.Length && (_index % 7 == 0))
         {
-            // visual already green; keep moving
+            // visual already cyber pink; keep moving
         }
 
         ScrollToEnd();
