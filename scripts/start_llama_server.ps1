@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Palaiž primāro llama.cpp llama-server ar GGUF no MainBrainOS models mapes.
@@ -49,12 +49,12 @@ if (-not $ModelPath -or -not (Test-Path $ModelPath)) {
     exit 1
 }
 
-Write-Host "=== Main Brain OS — llama-server (primārā inference) ===" -ForegroundColor Cyan
+Write-Host "=== Main Brain OS - llama-server (primārā inference) ===" -ForegroundColor Cyan
 Write-Host "Exe:    $exe"
 Write-Host "Modelis:$ModelPath"
 Write-Host "API:    http://${HostAddress}:${Port}/v1"
 
-# Ja jau klausās — nestartē otru
+# Ja jau klausās - nestartē otru
 try {
     $r = Invoke-WebRequest -Uri "http://${HostAddress}:${Port}/v1/models" -UseBasicParsing -TimeoutSec 2
     if ($r.StatusCode -lt 500) {
@@ -81,5 +81,5 @@ for ($i = 0; $i -lt 60; $i++) {
         }
     } catch {}
 }
-Write-Host "[BRĪDINĀJUMS] Serveris vēl neatbild — pārbaudiet procesu/žurnālus" -ForegroundColor Yellow
+Write-Host "[BRĪDINĀJUMS] Serveris vēl neatbild - pārbaudiet procesu/žurnālus" -ForegroundColor Yellow
 exit 0

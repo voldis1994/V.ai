@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -6,7 +6,7 @@ Set-Location $root
 $report = @()
 function Add-Result($Id, $Status, $Evidence) {
     $script:report += [pscustomobject]@{ Id = $Id; Status = $Status; Evidence = $Evidence }
-    Write-Host "[$Status] $Id — $Evidence"
+    Write-Host "[$Status] $Id - $Evidence"
 }
 
 $py = Join-Path $root ".venv\Scripts\python.exe"

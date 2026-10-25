@@ -1,7 +1,7 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  Main Brain OS — automātiska Windows atkarību lejupielāde un uzstādīšana.
+  Main Brain OS - automātiska Windows atkarību lejupielāde un uzstādīšana.
 .DESCRIPTION
   Pārbauda/instalē: winget rīkus, .NET 8 SDK, Python 3.12+, WebView2 Runtime,
   projekta .venv, pip atkarības, datu mapes.
@@ -202,7 +202,7 @@ if ($webviewOk) {
         Write-Host "Instalē WebView2..."
         Start-Process -FilePath $wv -ArgumentList "/silent", "/install" -Wait
     }
-    Write-Ok "WebView2 instalācijas solis pabeigts (ja nepieciešams — restartējiet)"
+    Write-Ok "WebView2 instalācijas solis pabeigts (ja nepieciešams - restartējiet)"
 }
 
 # --- Git (noderīgs) ---
@@ -232,7 +232,7 @@ if (Test-Path (Join-Path $root "pyproject.toml")) {
         & $venvPython -m pip install -e .
     }
 } else {
-    Write-Warn "pyproject.toml nav atrasts — iespējams, neesat repo saknē"
+    Write-Warn "pyproject.toml nav atrasts - iespējams, neesat repo saknē"
 }
 Write-Ok "Python pakotnes uzstādītas"
 
@@ -254,7 +254,7 @@ if (-not $SkipLlamaServer) {
     if (Test-Path $llamaInstall) {
         & powershell -NoProfile -ExecutionPolicy Bypass -File $llamaInstall -AcceptDownloads
         if ($LASTEXITCODE -ne 0) {
-            Write-Warn "llama-server instalācija neizdevās — AI inference nebūs, līdz to uzstādīsiet"
+            Write-Warn "llama-server instalācija neizdevās - AI inference nebūs, līdz to uzstādīsiet"
         } else {
             Write-Ok "llama-server uzstādīts (%LOCALAPPDATA%\MainBrainOS\llama)"
         }
@@ -278,7 +278,7 @@ if ($DownloadModels) {
     }
     & powershell -NoProfile -ExecutionPolicy Bypass -File $dl -Profile $ModelProfile -AcceptDownloads -ModelsDir $modelsDir
     if ($LASTEXITCODE -ne 0) {
-        Write-Warn "Modeļu lejupielāde beidzās ar kļūdu — pārējā uzstādīšana turpinās"
+        Write-Warn "Modeļu lejupielāde beidzās ar kļūdu - pārējā uzstādīšana turpinās"
     }
     # Palaid llama-server ar lejupielādēto modeli
     $startLlama = Join-Path $root "scripts\start_llama_server.ps1"
@@ -286,7 +286,7 @@ if ($DownloadModels) {
         & powershell -NoProfile -ExecutionPolicy Bypass -File $startLlama -InstallIfMissing
     }
 } else {
-    Write-Host "GGUF nav lejupielādēti. START_MAINBRAIN.bat → opcija 4/5/6"
+    Write-Host "GGUF nav lejupielādēti. START_MAINBRAIN.bat -> opcija 4/5/6"
     Write-Host "  vai: scripts\download_models.ps1 -Profile light"
 }
 Write-Host "Ollama NAV nepieciešama. Tā ir tikai neobligāta rezerve (MAINBRAIN_OLLAMA_ENABLED=true)."
@@ -315,6 +315,6 @@ if (-not $SkipStart) {
         Write-Step "Palaiž izstrādes vidi"
         & powershell -NoProfile -ExecutionPolicy Bypass -File $startPs1
     } else {
-        Write-Warn "start_dev.ps1 nav atrasts — palaidiet MainBrain.exe manuāli pēc būvēšanas"
+        Write-Warn "start_dev.ps1 nav atrasts - palaidiet MainBrain.exe manuāli pēc būvēšanas"
     }
 }

@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -51,7 +51,7 @@ $manifest = @{
 Set-Content -Path (Join-Path $out "manifest.json") -Value $manifest -Encoding UTF8
 
 @"
-# Main Brain OS — laidiena palaišana
+# Main Brain OS - laidiena palaišana
 
 1. Pārliecinieties, ka ir instalēts .NET 8 Desktop Runtime un WebView2.
 2. Palaidiet MainBrain.exe

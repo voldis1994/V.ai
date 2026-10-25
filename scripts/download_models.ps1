@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Lejupielādē GGUF modeļus Main Brain OS lomām ar skaidru lietotāja apstiprinājumu.
@@ -110,7 +110,7 @@ foreach ($p in $plan) {
     if ((Test-Path $p.Dest) -and -not $Force) {
         $size = (Get-Item $p.Dest).Length
         if ($size -gt 1MB) {
-            Write-Ok "Jau ir lokāli ($([math]::Round($size/1MB)) MB) — izlaiž"
+            Write-Ok "Jau ir lokāli ($([math]::Round($size/1MB)) MB) - izlaiž"
             $downloaded += $p
             continue
         }
@@ -166,4 +166,4 @@ Write-Host "Nākamais solis (PRIMĀRI llama.cpp, ne Ollama):"
 Write-Host "  scripts\install_llama_server.ps1"
 Write-Host "  scripts\start_llama_server.ps1"
 Write-Host "API: http://127.0.0.1:8080/v1"
-Write-Ok "Modeļu lejupielāde pabeigta (vai daļēji — skatiet brīdinājumus)"
+Write-Ok "Modeļu lejupielāde pabeigta (vai daļēji - skatiet brīdinājumus)"

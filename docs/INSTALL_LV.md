@@ -1,22 +1,18 @@
 # Uzstādīšana (latviešu)
 
-## Ja START_MAINBRAIN.bat “saplīst” (daudz “is not recognized”)
+## Viens fails — pilna uzstādīšana + EXE
 
-Vecā versija ar Unix `LF` rindu galiem Windows CMD salauž. Atjauniniet `main` un palaidiet no jauna:
+Lejupielādējiet **jaunāko** main ZIP (ne veco mapi):  
+https://github.com/voldis1994/V.ai/archive/refs/heads/main.zip
 
-```powershell
-git checkout main
-git pull
-.\START_MAINBRAIN.bat
-```
+Izpakojiet un palaidiet **`START_MAINBRAIN.bat`**.
 
-Vai tieši PowerShell:
+Tas uzstāda atkarības, llama-server, GGUF, uzbūvē **`release\win-x64\MainBrain.exe`**
+un izveido darbvirsmas īsceļu **Main Brain OS** ikdienas lietošanai.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start_mainbrain.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_full.ps1
 ```
-
-Izvēlieties **[4]** (GGUF light + palaist).
 
 ## Prasības
 

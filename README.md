@@ -2,25 +2,27 @@
 
 Lokāls Windows AI vadības centrs: **MainBrain.exe**, Main Brain orķestrators, **50 specializēti aģenti**, Focus/Multi-Window režīmi, WebView2, UI Automation un lokāla inference.
 
-## Ātrā sākšana (Windows)
+## Ātrā sākšana (Windows) — VIENS fails
 
-Veiciet dubultklikšķi:
+1. Lejupielādējiet **jaunāko** `main`:  
+   https://github.com/voldis1994/V.ai/archive/refs/heads/main.zip  
+   (vai `git clone https://github.com/voldis1994/V.ai.git`)
+2. Izpakojiet un veiciet **dubultklikšķi**:
 
 ```text
 START_MAINBRAIN.bat
 ```
 
-Tas uzstāda .NET 8, Python 3.12+, WebView2, **llama.cpp `llama-server`** (primārā AI) un projekta atkarības.
-GGUF modeļus — bat izvēlne (opcijas ar modeļiem) vai `scripts\download_models.ps1`.
-**Ollama nav nepieciešama** (tikai rezerve ar `MAINBRAIN_OLLAMA_ENABLED=true`).
+Tas **vienā gājienā**:
+- uzstāda .NET 8, Python, WebView2
+- uzstāda **llama-server** + lejupielādē GGUF (~2 GB)
+- **uzbūvē `MainBrain.exe`**
+- izveido darbvirsmas īsceļu **Main Brain OS**
+- palaiž programmu
 
-```powershell
-./scripts/bootstrap_windows.ps1
-./scripts/install_llama_server.ps1
-./scripts/download_models.ps1 -Profile light
-./scripts/start_llama_server.ps1
-./scripts/start_dev.ps1
-```
+### Ikdienas lietošana
+Dubultklikšķis uz darbvirsmas **Main Brain OS** (vai `release\win-x64\MainBrain.exe`).  
+Ollama **nav** vajadzīga.
 
 ## Backend testi (jebkura OS)
 

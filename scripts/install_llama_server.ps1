@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Lejupielādē un uzstāda llama.cpp `llama-server` Windows x64 (primārā Main Brain OS inference).
@@ -31,7 +31,7 @@ if (-not $AcceptDownloads) {
     if ($ans -notmatch '^[jJyY]') { Write-Warn "Atcelts."; exit 0 }
 }
 
-# Oficiālie llama.cpp release avoti (jaunākais → vecākais)
+# Oficiālie llama.cpp release avoti (jaunākais -> vecākais)
 $apiUrls = @(
     "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest",
     "https://api.github.com/repos/ggerganov/llama.cpp/releases/latest"

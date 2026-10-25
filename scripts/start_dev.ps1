@@ -1,11 +1,11 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
 $env:PYTHONPATH = Join-Path $root "src\backend"
 $env:MAINBRAIN_API_TOKEN = [guid]::NewGuid().ToString("N")
-# Primārā inference — llama.cpp; Ollama pēc noklusējuma IZSLĒGTA
+# Primārā inference - llama.cpp; Ollama pēc noklusējuma IZSLĒGTA
 $env:MAINBRAIN_OLLAMA_ENABLED = "false"
 $env:MAINBRAIN_PRIMARY_PROVIDER = "llama.cpp"
 $env:MAINBRAIN_LLAMA_BASE_URL = "http://127.0.0.1:8080/v1"
