@@ -29,8 +29,18 @@ $llamaStart = Join-Path $root "scripts\start_llama_server.ps1"
 
 if (-not (Test-Path $bootstrap)) { Fail "Missing scripts\bootstrap_windows.ps1 - use full GitHub main zip/clone" }
 
-# 1) Dependencies (.NET, Python, WebView2, venv) - do not auto-start dev UI
-Step "1/5 Install dependencies"
+# If previous run created .venv with Python 3.14, remove it now
+$oldVenv = Join-Path $root ".venv\Scripts\python.exe"
+if (Test-Path $oldVenv) {
+    $ov = & $oldVenv --version 2>&1 | Out-String
+    if ($ov -match 'Python\s+3\.14') {
+        Warn "Removing .venv built with Python 3.14 (unsupported)"
+        Remove-Item -Recurse -Force (Join-Path $root ".venv")
+    }
+}
+
+# 1) Dependencies (.NET, Python 3.12, WebView2, venv) - do not auto-start dev UI
+Step "1/5 Install dependencies (Python 3.12 required)"
 $bootArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $bootstrap, "-AcceptDownloads", "-SkipStart")
 if (-not $SkipModels) {
     $bootArgs += @("-DownloadModels", "-ModelProfile", $ModelProfile)
