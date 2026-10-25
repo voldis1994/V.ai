@@ -62,13 +62,8 @@ class ModelRouter:
             return self._health_cache
         results: list[ModelHealth] = []
         llama_ok, llama_detail = await self._probe_openai_compatible(self.settings.llama_base_url)
-        ollama_ok, ollama_detail = (False, "Ollama rezerve izslēgta (MAINBRAIN_OLLAMA_ENABLED=false)")
-        if self.settings.ollama_enabled:
-            ollama_ok, ollama_detail = await self._probe_ollama(self.settings.ollama_base_url)
-        # NEBLOĶĒ chat ar 4× pilnu inference probe — pietiek ar /v1/models.
-        # Pilna inference pārbaude tikai reizi (cache) un ar īsu timeout.
+        # Ollama VIENMĒR OFF — netiek probe'ota / saukta / gaidīta
         llama_infer = (llama_ok, "server OK (bez inference probe)")
-        ollama_infer = (ollama_ok, "tags OK")
         if llama_ok and force:
             llama_infer = await self._probe_inference_openai(self.settings.llama_base_url)
         for role in (ModelRole.REASONING, ModelRole.CODING, ModelRole.VISION, ModelRole.EMBEDDING):
@@ -77,7 +72,7 @@ class ModelRouter:
             base = None
             details = "Modelis nav konfigurēts"
             available = False
-            # 1) Primāri vienmēr llama.cpp
+            # Tikai llama.cpp — Ollama nav rezerve
             if mapped and llama_ok:
                 provider = "llama.cpp"
                 base = self.settings.llama_base_url
@@ -88,14 +83,6 @@ class ModelRouter:
                 base = self.settings.llama_base_url
                 available = llama_infer[0]
                 details = f"llama-server aktīvs; inference={llama_infer[1]}"
-            elif mapped and self.settings.ollama_enabled and ollama_ok:
-                # 2) Tikai skaidri ieslēgta Ollama rezerve
-                provider = "ollama"
-                base = self.settings.ollama_base_url
-                if force:
-                    ollama_infer = await self._probe_inference_ollama(base, mapped["name"])
-                available = ollama_infer[0]
-                details = f"REZERVE Ollama: {mapped['name']}; {ollama_detail}; inference={ollama_infer[1]}"
             elif not mapped:
                 details = (
                     "Nav GGUF šai lomai. Ievietojiet modeli models mapē un palaidiet llama-server. "

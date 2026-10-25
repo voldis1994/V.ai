@@ -78,7 +78,7 @@
                      CaretBrush="#FFFF2ECB" Padding="0,8"
                      KeyDown="ChatBox_OnKeyDown"/>
           </DockPanel>
-          <TextBlock Text="Enter · jautā   ·   labajā: mazais logs (aizveras pats)   ·   kamera / voice   ·   Ctrl+Shift+D · sistēma"
+          <TextBlock Text="Enter · jautā   ·   labajā: web VAI fails/kods   ·   bez Ollama   ·   Ctrl+Shift+D · sistēma"
                      FontFamily="Consolas" FontSize="11" Foreground="#44FF2ECB"
                      HorizontalAlignment="Center" Margin="0,6,0,0"/>
         </StackPanel>

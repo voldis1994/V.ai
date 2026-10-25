@@ -345,7 +345,7 @@ public partial class MainViewModel : ObservableObject
                 await Task.Delay(900);
             }
 
-            // Immersīvajā: PALIEKAM Matrix — neraujam ārā uz Notepad/VS Code
+            // Immersīvajā: PALIEKAM Matrix — rādam faila saturu mazajā logā (ne tikai web)
             if (!string.IsNullOrWhiteSpace(result.OpenPath) && File.Exists(result.OpenPath))
             {
                 try
@@ -353,7 +353,12 @@ public partial class MainViewModel : ObservableObject
                     var ext = Path.GetExtension(result.OpenPath).ToLowerInvariant();
                     if (ext is ".py" or ".txt" or ".md" or ".cs" or ".json")
                     {
-                        EditorText = File.ReadAllText(result.OpenPath);
+                        var code = File.ReadAllText(result.OpenPath);
+                        EditorText = code;
+                        ShowImmersiveActivity = true;
+                        ActivityTitle = "◈ KO ES DARU · fails " + Path.GetFileName(result.OpenPath);
+                        BrowserUrl = MakeActivityHtml(Path.GetFileName(result.OpenPath), code);
+                        await Task.Delay(1400);
                     }
                 }
                 catch
@@ -395,12 +400,31 @@ public partial class MainViewModel : ObservableObject
 
     private void FinishVisibleAction(string display, string fallback)
     {
-        // AIZVER mazo interneta logu (WebView → about:blank)
+        // AIZVER mazo logu (WebView → about:blank)
         ShowImmersiveActivity = false;
         BrowserUrl = "about:blank";
         MatrixStatus = "";
         FormedAnswer = string.IsNullOrWhiteSpace(display) ? fallback : display;
         RestoreMainOverlay?.Invoke();
+    }
+
+    /// <summary>Mazais logs — HTML ar darbību/kodu (ne tikai DuckDuckGo).</summary>
+    private static string MakeActivityHtml(string title, string body)
+    {
+        static string Esc(string s) =>
+            (s ?? "")
+                .Replace("&", "&amp;")
+                .Replace("<", "&lt;")
+                .Replace(">", "&gt;")
+                .Replace("\"", "&quot;");
+
+        var html =
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>" +
+            "<style>body{margin:0;background:#08020A;color:#FFB7EC;font:13px/1.45 Consolas,monospace;padding:12px}" +
+            "h1{color:#FF2ECB;font-size:14px;margin:0 0 10px}pre{white-space:pre-wrap;word-break:break-word;" +
+            "background:#12040F;border:1px solid #44FF2ECB;padding:10px;border-radius:6px}</style></head><body>" +
+            "<h1>◈ " + Esc(title) + "</h1><pre>" + Esc(body) + "</pre></body></html>";
+        return "data:text/html;charset=utf-8," + Uri.EscapeDataString(html);
     }
 
     private sealed record ActionPreview(bool ShowPip, string? OpenedUrl);
@@ -441,12 +465,14 @@ public partial class MainViewModel : ObservableObject
         if (build)
         {
             MatrixStatus = "◈ TAISU …";
-            ActivityTitle = "◈ KO ES DARU · rakstu failu";
+            ActivityTitle = "◈ KO ES DARU · rakstu failu (labajā)";
             FormedAnswer =
-                "Taisu uzdevumu šeit, Matrix ekrānā:\n1) Veidoju failu\n2) Rakstu kodu\n3) Rādīšu saturu šeit — NEIZEJU ārā uz citu programmu.";
-            ShowImmersiveActivity = false;
-            // NE Yield — paliekam immersīvajā (lietotājs teica: neizej ārā)
-            return new ActionPreview(false, null);
+                "Taisu failu. Labajā — mazais logs (nevis tikai web search). Kodā rādīšu saturu.";
+            ShowImmersiveActivity = true;
+            BrowserUrl = MakeActivityHtml(
+                "Rakstu failu",
+                "Veidoju mapi → rakstu kodu → rādīšu šeit. Neizeju uz Notepad/VS Code.");
+            return new ActionPreview(true, BrowserUrl);
         }
 
         if (openApp && !search)

@@ -33,7 +33,8 @@ _BUILD_RE = re.compile(
     r"uzraksti\s+kod|izveido\s+fail|izveido\s+programm|"
     r"uztaisi\s+programm|make\s+a\s+|create\s+a\s+|write\s+a\s+|"
     # «palaid skriptu/testu» = build; tīrs «atver notepad» = OPEN (zemāk)
-    r"palaid\s+(skript|test|kod|python|program)"
+    r"palaid\s+(skript|test|kod|python|program)|"
+    r"hello\s*world|hello\.py|\.py\b"
     r")\b"
 )
 

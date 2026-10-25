@@ -200,7 +200,7 @@ class ChatService:
             return self._finish(session, history, ask, user_msg=user_msg)
 
         # BRĪVAIS REŽĪMS: jautājumi / personas / meklēšana / skaidrojumi / iemācies
-        # → pārlūks + fakti + SAGLABĀ fails. NEgaidām Ollama.
+        # → pārlūks + fakti + SAGLABĀ fails. NEKAD negaidām Ollama / LLM.
         if intent in {Intent.PERSON, Intent.SEARCH, Intent.EXPLAIN, Intent.LEARN} or (
             intent == Intent.CHAT and self._looks_like_question(user_msg)
         ):
@@ -214,28 +214,11 @@ class ChatService:
                 learn=intent == Intent.LEARN,
             )
 
-        # Īss chat bez jautājuma — mēģina LLM ātri; ja lēns/nav — skaidra norāde
-        local_hits = self._search_local_knowledge(topic) or self._search_local_knowledge(user_msg)
-        reply = await self._llm_task(
-            intent=Intent.CHAT,
-            user_msg=user_msg,
-            topic=topic,
-            history=history,
-            local_hits=local_hits,
-        )
-        if _is_junk(reply):
-            if local_hits:
-                reply = "\n".join(local_hits[:3])
-            else:
-                reply = (
-                    "Labāk tā (es daru UZREIZ, bez Ollama):\n"
-                    "• «sameklē …» — atveru pārlūku + pastāstu\n"
-                    "• «uztaisi …» — izveidoju failu/programmu\n"
-                    "• «atver chrome / notepad» — fiziski atveru"
-                )
+        # Elementāri uzdevumi — deterministiski, BEZ llama/Ollama gaidīšanas
+        reply = self._reason_local(user_msg, topic)
         if reply and not _is_junk(reply):
             self._remember(topic or user_msg, reply, kind="chat")
-        return self._finish(session, history, reply)
+        return self._finish(session, history, reply, user_msg=user_msg)
 
     def _actor(self) -> PhysicalActor | None:
         tools = getattr(getattr(self.brain, "runtime", None), "tools", None)
@@ -703,6 +686,34 @@ class ChatService:
             "Norādi ko atvērt — piem.: «atver notepad», «atver pārlūku», «atver chrome».",
         )
 
+    def _reason_local(self, user_msg: str, topic: str) -> str:
+        """Objektīva, tūlītēja atbilde BEZ Ollama/llama gaidīšanas."""
+        local = self._search_local_knowledge(topic) or self._search_local_knowledge(user_msg)
+        local = [h for h in local if not self._looks_like_build_log(h) and not self._is_noise_fact(h)]
+        if local:
+            body = "\n".join(f"• {h[:280]}" for h in local[:3])
+            return (
+                f"No atmiņas par «{topic or user_msg}»:\n{body}\n\n"
+                "Ja vajag svaigu info: «sameklē …». Ja taisīt: «uztaisi …»."
+            )
+        # Heuristika — saprot uzdevumu un ROSINA darbību, nevis gaida modeli
+        low = (user_msg or "").lower()
+        if re.search(r"(?i)\b(paldies|thanks|ok|okei|labi|super)\b", low) and len(low) < 40:
+            return "Labi. Ko darām tālāk?"
+        if re.search(r"(?i)\b(palīdzi|help|ko\s+tu\s+vari|spēj)\b", low):
+            return (
+                "Es daru uzreiz datorā (bez Ollama gaidīšanas):\n"
+                "• «sameklē Voldis Sidorovs» — meklēšu + saglabāšu + pastāstīšu\n"
+                "• «uzraksti python hello.py» — uzrakstīšu failu un rādīšu kodu\n"
+                "• «atver notepad» — atvēršu programmu\n"
+                "• «ko tu redzi» — kameras kadrs\n"
+                "• «pasaki …» — balsī (Everita)"
+            )
+        return (
+            f"Saprotu: «{user_msg}». Daru bez modeļa gaidīšanas — "
+            "pasaki konkrēti: sameklē / uztaisi / atver / pasaki."
+        )
+
     async def _llm_task(
         self,
         *,
@@ -712,132 +723,9 @@ class ChatService:
         history: list[dict[str, str]],
         local_hits: list[str],
     ) -> str:
-        # 7B Q4: pietiekami tokeni kvalitātei, bet ne tik daudz, lai 100s timeout
-        if intent == Intent.EXPLAIN or intent == Intent.LEARN:
-            system = SYSTEM_EXPLAIN
-            max_tokens = 360
-            role = ModelRole.CODING if self._looks_technical(topic) else ModelRole.REASONING
-        elif intent == Intent.SEARCH:
-            system = SYSTEM_SEARCH
-            max_tokens = 260
-            role = ModelRole.REASONING
-        else:
-            system = SYSTEM_CHAT
-            max_tokens = 220
-            role = ModelRole.REASONING
-
-        context_bits = ""
-        if local_hits:
-            joined = "\n- ".join(h[:350] for h in local_hits[:3])
-            context_bits = f"\n\nZināšanas / konteksts (izmanto!):\n- {joined}"
-
-        if intent == Intent.SEARCH:
-            prompt_user = (
-                f"Lietotājs lūdz sameklēt: {user_msg}\n"
-                f"Tēma: {topic}.{context_bits}\n"
-                "Atbildi noderīgi, īsākām teikumiem."
-            )
-        elif intent in {Intent.EXPLAIN, Intent.LEARN}:
-            prompt_user = (
-                f"Izskaidro īsi: {topic}\n"
-                f"Jautājums: {user_msg}.{context_bits}"
-            )
-        else:
-            prompt_user = user_msg
-
-        messages: list[dict[str, str]] = [{"role": "system", "content": system}]
-        # Minimāla vēsture — mazāks prompt = ātrāka prefills
-        for m in history[-2:]:
-            if m["content"] == user_msg and m["role"] == "user":
-                continue
-            content = m["content"]
-            if len(content) > 400:
-                content = content[:400] + "…"
-            messages.append({"role": m["role"], "content": content})
-        messages.append({"role": "user", "content": prompt_user})
-
-        t0 = time.monotonic()
-        try:
-            result = await asyncio.wait_for(
-                self.models.complete_messages(
-                    role=role,
-                    messages=messages,
-                    temperature=0.2,
-                    max_tokens=max_tokens,
-                    frequency_penalty=0.45,
-                    presence_penalty=0.25,
-                    repeat_penalty=1.18,
-                    stop=["\nTu:", "\nUser:", "\nuser:", "\nMain Brain:"],
-                    timeout_sec=_CHAT_LLM_BUDGET_SEC,
-                ),
-                timeout=_CHAT_LLM_BUDGET_SEC + 2.0,
-            )
-        except asyncio.TimeoutError:
-            if local_hits:
-                return "\n".join(local_hits[:3]) + "\n\n(Modelis bija pārāk lēns — rādu lokālo kontekstu.)"
-            return (
-                "Modelis neatbildēja laikā (CPU pārāk noslogots). "
-                "Aizver smagas programmas un mēģini vēlreiz, vai UPGRADE_MODEL.bat (ātrāks Q4)."
-            )
-
-        reply = ""
-        if result.get("ok") and (result.get("text") or "").strip():
-            reply = _clean_reply(str(result["text"]))
-        else:
-            err = str(result.get("error") or "Lokālais modelis nav pieejams")
-            if local_hits:
-                return "\n".join(local_hits[:3]) + f"\n\n(Modelis: {err})"
-            return (
-                f"{err} "
-                "Ja atbildes ir vājas — UPGRADE_MODEL.bat (3B/7B Q4)."
-            )
-
-        elapsed = time.monotonic() - t0
-        # Otrais LLM mēģinājums TIKAI ja vēl ir budžets — citādi UI timeout
-        if _is_junk(reply) and elapsed < _CHAT_RETRY_BUDGET_SEC:
-            remain = max(12.0, _CHAT_LLM_BUDGET_SEC - elapsed - 2.0)
-            try:
-                retry = await asyncio.wait_for(
-                    self.models.complete_messages(
-                        role=role,
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": "Atbildi latviešu valodā skaidri un īsākām. Ja nezini — «Nezinu.»",
-                            },
-                            {"role": "user", "content": prompt_user},
-                        ],
-                        temperature=0.05,
-                        max_tokens=min(120, max_tokens),
-                        frequency_penalty=0.7,
-                        repeat_penalty=1.3,
-                        timeout_sec=remain,
-                    ),
-                    timeout=remain + 1.0,
-                )
-            except asyncio.TimeoutError:
-                retry = {"ok": False}
-            if retry.get("ok") and (retry.get("text") or "").strip():
-                reply = _clean_reply(str(retry["text"]))
-            if _is_junk(reply):
-                if local_hits:
-                    return "\n".join(local_hits[:4])
-                return (
-                    f"Nezinu drošu atbildi par «{topic}». "
-                    "Mēģini vēlreiz vai UPGRADE_MODEL.bat (3B/7B) labākai saprašanai."
-                )
-        elif _is_junk(reply):
-            if local_hits:
-                return "\n".join(local_hits[:4])
-            return (
-                f"Modelis iedeva neskaidru atbildi par «{topic}». "
-                "Mēģini vēlreiz īsāku jautājumu."
-            )
-
-        if intent in {Intent.SEARCH, Intent.PERSON} and local_hits:
-            reply = f"[Avoti: {len(local_hits)}]\n{reply}"
-
-        return reply
+        """Chat vairs NEGAIDA Ollama/llama — tikai lokāla iemeslošana."""
+        _ = (intent, history, local_hits)
+        return self._reason_local(user_msg, topic)
 
     @staticmethod
     def _looks_like_question(text: str) -> bool:
@@ -1079,11 +967,10 @@ class ChatService:
                 goal = goal[len(prefix) :].strip()
                 break
 
-        # Ātrais ceļš: vienkāršs Python / teksta fails — UZREIZ raksta + atver (redzams)
+        # Ātrais ceļš: Python / skripts — UZREIZ, bez aģentu/Ollama gaidīšanas
         quick = self._quick_build(goal, req.workspace_path)
         if quick is not None:
             reply, path, spoken = quick
-            self._remember(goal[:120], reply, kind="execute")
             return self._finish(
                 session,
                 history,
@@ -1097,24 +984,30 @@ class ChatService:
                 user_msg=req.message,
             )
 
-        ack_text = "Sapratu — sāku taisīt. Tagad rakstu failus un atvēršu tos, lai redzi ko daru."
+        ack_text = "Sapratu — sāku taisīt (bez Ollama). Rakstu failus un rādīšu šeit."
         try:
-            result = await self.brain.run_goal(
-                RunGoalRequest(
-                    text=goal,
-                    workspace_path=req.workspace_path,
-                    auto_approve_safe=True,
-                )
+            result = await asyncio.wait_for(
+                self.brain.run_goal(
+                    RunGoalRequest(
+                        text=goal,
+                        workspace_path=req.workspace_path,
+                        auto_approve_safe=True,
+                    )
+                ),
+                timeout=28.0,
+            )
+        except asyncio.TimeoutError:
+            err = (
+                "Uzdevums ieilga — negaidīju Ollama/modeli. "
+                "Mēģini konkrētāk: «uzraksti python hello.py» vai «sameklē …»."
+            )
+            return self._finish(
+                session, history, err, mode="execute", goal_status="timeout", user_msg=req.message
             )
         except Exception as exc:  # noqa: BLE001 — chat nedrīkst mest 500
             err = f"Izpilde neizdevās: {exc}"
-            history.append({"role": "assistant", "content": err})
-            return ChatResponse(
-                reply=err,
-                mode="execute",
-                session_id=session,
-                goal_status="failed",
-                messages=[ChatMessage(**m) for m in history[-10:]],
+            return self._finish(
+                session, history, err, mode="execute", goal_status="failed", user_msg=req.message
             )
 
         status = getattr(result.status, "value", str(result.status))
@@ -1175,15 +1068,32 @@ class ChatService:
         """Vienkārši «uzraksti python / hello / skriptu» — uzreiz fails + redaktors."""
         g = (goal or "").lower()
         wants_py = bool(
-            re.search(r"(?i)\b(python|\.py|skript|script|hello\s*world|programma)\b", goal)
+            re.search(r"(?i)\b(python|\.py|skript|script|hello\s*world|programma|kodu|code)\b", goal)
         )
         if not wants_py:
             return None
         # Lieli «sistēma / sejas» — atstāj aģentiem
-        if re.search(r"(?i)\b(seja|face|sistēm|os\b|windows\s+app|pilnu?\s+projekt)", g):
+        if re.search(r"(?i)\b(seja|face|sistēm|windows\s+app|pilnu?\s+projekt)", g):
             return None
 
-        root = Path(workspace_path) if workspace_path else Path.home() / "Documents" / "MainBrainOS" / "projects"
+        # Projekta mape: eksplicīts workspace (testi) VAI Documents\MainBrainOS\projects
+        if workspace_path:
+            wp = Path(workspace_path).resolve()
+            home = Path.home().resolve()
+            docs = (home / "Documents").resolve()
+            name = wp.name.lower()
+            # Profils / Documents / OneDrive Documents — NEraidi failus saknē
+            if (
+                wp == home
+                or wp == docs
+                or name in {"documents", "document"}
+                or (name == home.name and wp.parent.name.lower() == "users")
+            ):
+                root = (wp if name in {"documents", "document"} else docs) / "MainBrainOS" / "projects"
+            else:
+                root = wp
+        else:
+            root = Path.home() / "Documents" / "MainBrainOS" / "projects"
         try:
             root.mkdir(parents=True, exist_ok=True)
         except OSError:
