@@ -9,27 +9,27 @@ from mainbrain.core.ids import utc_now
 from mainbrain.models.router import ModelRouter
 
 
-SYSTEM_CHAT = """Tu esi Main Brain — lokāls Windows AI asistents.
+SYSTEM_CHAT = """Tu esi Main Brain — Windows AI ar piekļuvi VISAM lietotāja datoram un internetam.
 Noteikumi:
 1) Atbildi latviešu valodā, skaidri un pēc būtības.
 2) Atbildi TIKAI uz jautājumu. Nekad neatkārto tekstu.
-3) Ja nezini faktu (cilvēki, jaunumi) — saki godīgi. Neizdomā.
+3) Ja ir tīmekļa/meklēšanas konteksts — balsties uz to; neizdomā.
 4) Matemātiku rēķini precīzi.
-5) Ja lūdz izveidot/palaist/labot datorā — īsi apstiprini izpildi."""
+5) Ja lūdz izveidot/palaist/labot datorā — īsi apstiprini izpildi (full_access)."""
 
-SYSTEM_EXPLAIN = """Tu esi Main Brain skolotājs.
+SYSTEM_EXPLAIN = """Tu esi Main Brain skolotājs ar internetu un datoru.
 Izskaidro tēmu latviešu valodā strukturēti:
 1) Kas tas ir (1–2 teikumi)
 2) Kā tas strādā (2–4 punkti)
 3) Neliels piemērs (kods vai soļi), ja der
-Bez atkārtojumiem. Ja tēma nav droši zināma — saki to skaidri."""
+Ja dots tīmekļa konteksts — izmanto to. Bez atkārtojumiem."""
 
-SYSTEM_SEARCH = """Tu esi Main Brain lokālais asistents BEZ interneta.
-Lietotājs lūdz «sameklēt». Tu:
-1) Godīgi saki, ka nav tīmekļa meklētāja
-2) Sniedz labāko lokālo izskaidrojumu / plānu no zināšanām
-3) Ja der — piedāvā nākamo soli: «uztaisi…» lai palaistu aģentus
-Bez biogrāfiju izdomāšanas. Bez atkārtojumiem."""
+SYSTEM_SEARCH = """Tu esi Main Brain ar INTERNETU un pilnu datoru.
+Lietotājs lūdz sameklēt. Tev ir tīmekļa rezultāti kontekstā.
+1) Apkopo faktus no rezultātiem
+2) Norādi 1–3 avotu URL
+3) Ja rezultāti vāji — saki to un piedāvā nākamo soli (uztaisi / atver pārlūkā)
+Bez muļķībām un bez atkārtojumiem."""
 
 _BAD_REPLY = re.compile(
     r"(?i)("
@@ -125,14 +125,6 @@ class ChatService:
             if math_reply:
                 return self._finish(session, history, math_reply)
 
-        if intent == Intent.PERSON:
-            return self._finish(
-                session,
-                history,
-                "Man nav drošu lokālo datu par šo personu (bez interneta biogrāfijas neizdomāju). "
-                "Ja vajag tehnisku skaidrojumu vai programmu — raksti «izskaidro …» vai «uztaisi …».",
-            )
-
         # Valodu īsie FAQ
         if re.search(r"(?i)(valod|language|scottish|scotland|skotij)", user_msg):
             if re.search(r"(?i)(scottish|scotland|skot)", user_msg):
@@ -149,14 +141,25 @@ class ChatService:
 
         topic = extract_topic(user_msg)
 
-        if intent in {Intent.SEARCH, Intent.LEARN, Intent.EXPLAIN}:
+        # Personas / meklēšana / mācīšanās — ar internetu
+        if intent in {Intent.PERSON, Intent.SEARCH, Intent.LEARN, Intent.EXPLAIN}:
             local_hits = self._search_local_knowledge(topic)
+            web_hits: list[str] = []
+            if self._internet_enabled():
+                web_hits = await self._search_web(topic if intent != Intent.PERSON else user_msg)
+            if intent == Intent.PERSON and not web_hits and not local_hits:
+                return self._finish(
+                    session,
+                    history,
+                    "Internets neatdeva drošus rezultātus par šo personu. "
+                    "Mēģini precīzāku vārdu vai «sameklē …».",
+                )
             reply = await self._llm_task(
-                intent=intent,
+                intent=Intent.SEARCH if intent == Intent.PERSON else intent,
                 user_msg=user_msg,
                 topic=topic,
                 history=history,
-                local_hits=local_hits,
+                local_hits=local_hits + web_hits,
             )
             if intent == Intent.LEARN and reply and not _is_junk(reply):
                 self._remember(topic, reply)
@@ -275,26 +278,33 @@ class ChatService:
             if retry.get("ok") and (retry.get("text") or "").strip():
                 reply = _clean_reply(str(retry["text"]))
             if _is_junk(reply):
-                if intent == Intent.SEARCH:
-                    return (
-                        f"Lokāli neatrada drošu info par «{topic}» (nav interneta). "
-                        "Mēģini «izskaidro …» vai «uztaisi …». "
-                        "Labākai saprašanai: UPGRADE_MODEL.bat (Qwen 7B)."
-                    )
+                if local_hits:
+                    return "\n".join(local_hits[:4])
                 return (
-                    f"Nezinu drošu atbildi par «{topic}» (modelis pārāk vājš vai nav datu). "
-                    "Pārslēdzies uz capable 7B: UPGRADE_MODEL.bat — tad uzdevumus sapratīs labāk."
+                    f"Nezinu drošu atbildi par «{topic}». "
+                    "Mēģini vēlreiz vai UPGRADE_MODEL.bat (3B/7B) labākai saprašanai."
                 )
 
-        if intent == Intent.SEARCH and local_hits:
-            reply = f"[Lokālā atmiņa: {len(local_hits)} trāpījumi]\n{reply}"
-        elif intent == Intent.SEARCH:
-            reply = f"(Bez interneta — tikai lokālās zināšanas)\n{reply}"
+        if intent in {Intent.SEARCH, Intent.PERSON} and local_hits:
+            reply = f"[Avoti: {len(local_hits)}]\n{reply}"
 
         if intent == Intent.LEARN:
             reply = f"{reply}\n\n[Iemācīts] Saglabāju īsu kopsavilkumu lokālajā zināšanu bāzē."
 
         return reply
+
+    def _internet_enabled(self) -> bool:
+        runtime = getattr(self.brain, "runtime", None)
+        if runtime is not None:
+            m = getattr(runtime, "models", None)
+            if m is not None and getattr(m, "settings", None) is not None:
+                if getattr(m.settings, "offline_mode", False):
+                    return False
+                return bool(getattr(m.settings, "full_access", True))
+            tools = getattr(runtime, "tools", None)
+            if tools is not None and getattr(tools, "policy", None) is not None:
+                return bool(getattr(tools.policy, "full_access", True))
+        return True
 
     def _search_local_knowledge(self, topic: str) -> list[str]:
         store = getattr(self.brain, "store", None)
@@ -310,6 +320,18 @@ class ChatService:
             if content:
                 out.append(content[:400])
         return out
+
+    async def _search_web(self, query: str) -> list[str]:
+        try:
+            from mainbrain.tools.web import format_search_for_llm, web_search
+
+            payload = await web_search(query, max_results=5)
+            text = format_search_for_llm(payload)
+            if not payload.get("ok") and not payload.get("results"):
+                return []
+            return [text]
+        except Exception as exc:  # noqa: BLE001
+            return [f"(Interneta meklēšana neizdevās: {exc})"]
 
     def _remember(self, topic: str, reply: str) -> None:
         store = getattr(self.brain, "store", None)

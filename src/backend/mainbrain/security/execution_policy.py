@@ -4,7 +4,7 @@ import shlex
 from typing import Any
 
 
-# Atļautās bāzes komandas izolētā projekta kontekstā (papildu politika).
+# Atļautās bāzes komandas ierobežotā režīmā.
 ALLOWED_SHELL_PREFIXES = {
     "python",
     "python3",
@@ -20,25 +20,47 @@ ALLOWED_SHELL_PREFIXES = {
     "cat",
     "where",
     "which",
+    "curl",
+    "wget",
+    "ping",
+    "ipconfig",
+    "ifconfig",
+    "netstat",
+    "powershell",
+    "pwsh",
+    "cmd",
+    "notepad",
+    "explorer",
+    "start",
+    "code",
+    "npm",
+    "node",
+    "cargo",
+    "go",
+    "docker",
+    "winget",
+    "choco",
 }
 
+# Pat full_access režīmā — katastrofālas darbības
 DENIED_SHELL_PATTERNS = [
     "rm -rf /",
+    "rm -rf /*",
     "del /s /q c:\\",
-    "format ",
-    "shutdown",
-    "reg add",
-    "reg delete",
-    "net user",
-    "Start-Process powershell",
-    "Invoke-Expression",
-    "iex(",
-    "curl | sh",
-    "wget | sh",
+    "del /f /s /q c:\\",
+    "format c:",
+    "format d:",
+    "mkfs.",
+    ":(){:|:&};:",
+    "dd if=/dev/zero of=/dev/sd",
 ]
 
 
-def assess_shell_command(command: str | list[str]) -> dict[str, Any]:
+def assess_shell_command(
+    command: str | list[str],
+    *,
+    full_access: bool = False,
+) -> dict[str, Any]:
     if isinstance(command, list):
         text = " ".join(map(str, command))
         tokens = [str(c) for c in command]
@@ -55,15 +77,23 @@ def assess_shell_command(command: str | list[str]) -> dict[str, Any]:
             return {
                 "allowed": False,
                 "requires_approval": True,
-                "reason": f"Komanda satur aizliegtu šablonu: {bad}",
+                "reason": f"Komanda satur aizliegtu katastrofālu šablonu: {bad}",
                 "risk": "critical",
             }
 
     if not tokens:
         return {"allowed": False, "requires_approval": True, "reason": "Tukša komanda", "risk": "high"}
 
+    if full_access:
+        return {
+            "allowed": True,
+            "requires_approval": False,
+            "reason": "full_access: atļauta jebkura komanda (izņemot katastrofālus šablonus)",
+            "risk": "medium",
+        }
+
     head = tokens[0].lower().rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
-    head = head.removesuffix(".exe")
+    head = head.removesuffix(".exe").removesuffix(".cmd").removesuffix(".bat")
     if head in ALLOWED_SHELL_PREFIXES:
         return {
             "allowed": True,
@@ -80,7 +110,14 @@ def assess_shell_command(command: str | list[str]) -> dict[str, Any]:
     }
 
 
-def assess_python_code(code: str) -> dict[str, Any]:
+def assess_python_code(code: str, *, full_access: bool = False) -> dict[str, Any]:
+    if full_access:
+        return {
+            "allowed": True,
+            "requires_approval": False,
+            "reason": "full_access: Python kods atļauts",
+            "risk": "medium",
+        }
     lowered = code.lower()
     dangerous = [
         "os.system(",

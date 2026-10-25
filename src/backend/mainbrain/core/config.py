@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     max_retries: int = 2
     task_timeout_sec: int = 600
     offline_mode: bool = False
+    # Lietotājs atļāvis: viss lokālais dators + internets (STOP joprojām darbojas)
+    full_access: bool = True
     language: str = "lv"
 
     @property

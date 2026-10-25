@@ -726,14 +726,33 @@ def test_write_report():
         )
 
     def _documentation_researcher(self, agent, goal, inputs, model_note):
+        query = str(inputs.get("query") or goal or "").strip()
+        search = self._tool(agent, "web.search", {"query": query, "max_results": 5})
+        sources = []
+        summary = model_note or ""
+        if search.ok and isinstance(search.output, dict):
+            for item in search.output.get("results") or []:
+                sources.append(
+                    {
+                        "title": item.get("title"),
+                        "url": item.get("url"),
+                        "snippet": item.get("snippet"),
+                    }
+                )
+            summary = str(search.output.get("abstract") or summary or f"Meklēts: {query}")
+        if not sources:
+            sources = [
+                {
+                    "title": "DuckDuckGo",
+                    "url": f"https://duckduckgo.com/?q={query}",
+                    "snippet": "Atver meklēšanu pārlūkā",
+                }
+            ]
         return self._ok(
             agent,
-            "Dokumentācijas kopsavilkums",
-            {
-                "sources": [{"title": "Microsoft UI Automation", "url": "https://learn.microsoft.com/windows/win32/winauto/entry-uiauto-win32"}],
-                "summary": "UIA ir preferētais semantiskais vadības ceļš.",
-                "model_note": model_note,
-            },
+            "Dokumentācijas / interneta kopsavilkums",
+            {"sources": sources, "summary": summary, "model_note": model_note},
+            tool_results=[search],
         )
 
     def _website_qa(self, agent, goal, inputs, model_note):

@@ -30,6 +30,8 @@ SAFE_TOOLS = {
     "screen.capture",
     "tests.run",
     "dotnet.build",
+    "web.search",
+    "http.fetch",
 }
 
 APPROVAL_TOOLS = {
@@ -49,7 +51,8 @@ APPROVAL_TOOLS = {
     "git.restore",
 }
 
-BLOCKED_WITHOUT_APPROVAL = {
+# Pat full_access — šīs prasa apstiprinājumu (sistēmas kodols)
+ALWAYS_APPROVAL_TOOLS = {
     "admin.elevate",
     "registry.write",
     "service.install",
@@ -57,14 +60,24 @@ BLOCKED_WITHOUT_APPROVAL = {
 
 
 class PolicyEngine:
-    def __init__(self, workspace_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        workspace_root: Path | None = None,
+        *,
+        full_access: bool = True,
+    ) -> None:
         self.workspace_root = workspace_root.resolve() if workspace_root else None
+        # Lietotājs atļāvis: viss dators + internets
+        self.full_access = full_access
         self._approvals: dict[str, ApprovalRequest] = {}
         self._task_grants: dict[str, set[str]] = {}
         self.emergency_stop = False
 
     def set_workspace(self, path: str | Path | None) -> None:
         self.workspace_root = Path(path).resolve() if path else None
+
+    def set_full_access(self, enabled: bool) -> None:
+        self.full_access = enabled
 
     def stop(self) -> None:
         self.emergency_stop = True
@@ -81,7 +94,7 @@ class PolicyEngine:
                 redacted_args=redact_secrets(request.arguments),
             )
 
-        if request.tool in BLOCKED_WITHOUT_APPROVAL:
+        if request.tool in ALWAYS_APPROVAL_TOOLS:
             return self._require_approval(
                 request,
                 reason="Darbība prasa administratora/apstiprinājuma kontroli",
@@ -90,15 +103,17 @@ class PolicyEngine:
             )
 
         if agent_allowed_tools is not None and request.tool not in agent_allowed_tools:
-            return PolicyDecision(
-                allowed=False,
-                reason=f"Aģentam nav atļauts rīks {request.tool}",
-                risk_category=RiskCategory.HIGH,
-                redacted_args=redact_secrets(request.arguments),
-            )
+            # full_access: aģentu allowlist ir ieteikums, ne cietais bloķējums
+            if not self.full_access:
+                return PolicyDecision(
+                    allowed=False,
+                    reason=f"Aģentam nav atļauts rīks {request.tool}",
+                    risk_category=RiskCategory.HIGH,
+                    redacted_args=redact_secrets(request.arguments),
+                )
 
         path = self._extract_path(request)
-        if path is not None:
+        if path is not None and not self.full_access:
             try:
                 resolved = self._canonicalize(path)
             except OSError as exc:
@@ -119,7 +134,6 @@ class PolicyEngine:
                     )
 
             if request.tool == "files.delete" and self.workspace_root and self._is_inside_workspace(resolved):
-                # dzēšana darba mapē joprojām prasa apstiprinājumu, ja fails ir kritisks
                 if resolved.name in {".git", "pyproject.toml", "MainBrainOS.sln"} or resolved.suffix == ".exe":
                     return self._require_approval(
                         request,
@@ -129,7 +143,7 @@ class PolicyEngine:
                         paths=[str(resolved)],
                     )
 
-        if request.tool == "process.start":
+        if request.tool == "process.start" and not self.full_access:
             exe = str(request.arguments.get("program") or request.arguments.get("executable") or "")
             if exe.lower().endswith(".exe") and "download" in exe.lower():
                 return self._require_approval(
@@ -140,9 +154,11 @@ class PolicyEngine:
                     command=exe,
                 )
 
-        # Komandu/koda pārbaude — darba mape NAV pilnīga izolācija
         if request.tool == "shell.run":
-            assessment = assess_shell_command(request.arguments.get("command", ""))
+            assessment = assess_shell_command(
+                request.arguments.get("command", ""),
+                full_access=self.full_access,
+            )
             if not assessment["allowed"]:
                 return self._require_approval(
                     request,
@@ -151,7 +167,7 @@ class PolicyEngine:
                     impact="Čaulas komanda ar paaugstinātu risku",
                     command=str(request.arguments.get("command") or ""),
                 )
-            if not self._path_safe(request):
+            if not self.full_access and not self._path_safe(request):
                 return self._require_approval(
                     request,
                     reason="Čaulas izpilde ārpus drošās darba mapes",
@@ -161,7 +177,10 @@ class PolicyEngine:
                 )
 
         if request.tool == "python.run" and request.arguments.get("code"):
-            assessment = assess_python_code(str(request.arguments.get("code")))
+            assessment = assess_python_code(
+                str(request.arguments.get("code")),
+                full_access=self.full_access,
+            )
             if not assessment["allowed"]:
                 return self._require_approval(
                     request,
@@ -170,8 +189,25 @@ class PolicyEngine:
                     impact="Python kods ar riskantām konstrukcijām",
                 )
 
+        # Interneta rīki — full_access / SAFE
+        if request.tool in {"web.search", "http.fetch"}:
+            return PolicyDecision(
+                allowed=True,
+                reason="Interneta rīks atļauts",
+                risk_category=RiskCategory.MEDIUM,
+                redacted_args=redact_secrets(request.arguments),
+            )
+
+        if self.full_access:
+            # Lietotājs atļāvis: viss dators — auto-approve APPROVAL_TOOLS
+            return PolicyDecision(
+                allowed=True,
+                reason="full_access: lietotājs atļāvis pilnu datoru + internetu",
+                risk_category=RiskCategory.MEDIUM,
+                redacted_args=redact_secrets(request.arguments),
+            )
+
         if request.tool in APPROVAL_TOOLS and not self._has_grant(request):
-            # tests/dotnet/build/python.script darba mapē — atļauts ar ierobežojumiem
             if request.tool in {"tests.run", "dotnet.build"} and self._path_safe(request):
                 return PolicyDecision(
                     allowed=True,
@@ -182,7 +218,7 @@ class PolicyEngine:
             if request.tool == "python.run" and self._path_safe(request) and request.arguments.get("script"):
                 return PolicyDecision(
                     allowed=True,
-                    reason="Atļauta projekta Python skripta izpilde (nav brīvs kods ar riskiem)",
+                    reason="Atļauta projekta Python skripta izpilde",
                     risk_category=RiskCategory.MEDIUM,
                     redacted_args=redact_secrets(request.arguments),
                 )
@@ -304,7 +340,6 @@ class PolicyEngine:
         return None
 
     def _canonicalize(self, path: Path) -> Path:
-        # aizsardzība pret ../ un symlink apiešanu
         return Path(os.path.realpath(path))
 
     def _is_inside_workspace(self, path: Path) -> bool:

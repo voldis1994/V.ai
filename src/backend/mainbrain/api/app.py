@@ -39,7 +39,7 @@ class AppState:
         # Tokens TIKAI no vides / skaidras konfigurācijas — nav publiska /auth/token
         self.auth = AuthGate(token=settings.api_token or AuthGate().token)
         self.store = MemoryStore(settings.db_path)
-        self.policy = PolicyEngine(settings.workspace_root)
+        self.policy = PolicyEngine(settings.workspace_root, full_access=settings.full_access)
         from mainbrain.tools.bridge import DesktopToolBridge
 
         self.tools = ToolProxy(
@@ -113,12 +113,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "status": "ok",
             "version": __version__,
             "offline_mode": st.settings.offline_mode,
+            "full_access": st.settings.full_access,
             "emergency_stop": st.policy.emergency_stop,
             "agents": len(list_agents()),
             "resources": resources.output,
             "models": [m.model_dump(mode="json") for m in models],
             "language": "lv",
-            "features": ["chat", "goals", "agents50", "llama.cpp"],
+            "features": ["chat", "goals", "agents50", "llama.cpp", "web.search", "full_pc"],
         }
 
     @app.get("/auth/status", dependencies=[Depends(require_auth)])

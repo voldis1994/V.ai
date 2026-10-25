@@ -38,14 +38,26 @@ def test_files_roundtrip(runtime):
     assert read.output["content"] == "sveiki"
 
 
-def test_path_traversal_blocked_by_policy(runtime):
-    rt, ws, _ = runtime
-    outside = ws.parent / "secret.txt"
+def test_path_traversal_blocked_when_not_full_access(tmp_path: Path):
+    """Ierobežotā režīmā ārpus workspace vajag apstiprinājumu."""
+    policy = PolicyEngine(tmp_path, full_access=False)
+    outside = tmp_path.parent / "secret.txt"
     outside.write_text("nope", encoding="utf-8")
-    decision = rt.tools.policy.decide(
+    decision = policy.decide(
         ToolRequest(tool="files.delete", arguments={"path": str(outside)})
     )
     assert decision.requires_approval is True
+
+
+def test_full_access_allows_paths_outside_workspace(runtime):
+    rt, ws, _ = runtime
+    rt.tools.policy.set_full_access(True)
+    outside = ws.parent / "secret2.txt"
+    outside.write_text("ok", encoding="utf-8")
+    decision = rt.tools.policy.decide(
+        ToolRequest(tool="files.read", arguments={"path": str(outside)})
+    )
+    assert decision.allowed is True
 
 
 @pytest.mark.asyncio

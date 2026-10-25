@@ -52,7 +52,7 @@ def test_is_junk_detects_gaidis_loop():
     assert not _is_junk("Python ir programmēšanas valoda.")
 
 
-def test_local_greet_and_person_without_llm():
+def test_local_greet_without_llm():
     import asyncio
 
     from mainbrain.contracts.schemas import ChatRequest
@@ -62,14 +62,6 @@ def test_local_greet_and_person_without_llm():
     async def run():
         r1 = await svc.chat(ChatRequest(message="sveiks", session_id="x"))
         assert "Sveiki" in r1.reply
-        r2 = await svc.chat(
-            ChatRequest(
-                message="vai vari atrast informāciju par edgars gaidulis ?",
-                session_id="x",
-            )
-        )
-        assert "gaidis" not in r2.reply.lower()
-        assert "nav" in r2.reply.lower() or "datu" in r2.reply.lower()
 
     asyncio.run(run())
 

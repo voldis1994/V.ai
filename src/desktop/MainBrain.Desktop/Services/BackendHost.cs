@@ -81,6 +81,9 @@ public sealed class BackendHost : IDisposable
         psi.Environment["MAINBRAIN_OLLAMA_ENABLED"] = "false";
         psi.Environment["MAINBRAIN_PRIMARY_PROVIDER"] = "llama.cpp";
         psi.Environment["MAINBRAIN_LLAMA_BASE_URL"] = "http://127.0.0.1:8080/v1";
+        // Lietotājs atļāvis: viss dators + internets (STOP joprojām pārtrauc)
+        psi.Environment["MAINBRAIN_FULL_ACCESS"] = "true";
+        psi.Environment["MAINBRAIN_OFFLINE_MODE"] = "false";
 
         _process = Process.Start(psi) ?? throw new InvalidOperationException("Neizdevās palaist Python.");
         _process.OutputDataReceived += (_, e) => { if (e.Data is not null) Log(e.Data); };

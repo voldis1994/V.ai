@@ -6,7 +6,7 @@ from mainbrain.security.redact import redact_text
 
 
 def test_emergency_stop_blocks_tools(tmp_path: Path):
-    policy = PolicyEngine(tmp_path)
+    policy = PolicyEngine(tmp_path, full_access=False)
     policy.stop()
     decision = policy.decide(ToolRequest(tool="files.read", arguments={"path": str(tmp_path / "a.txt")}))
     assert decision.allowed is False
@@ -14,7 +14,7 @@ def test_emergency_stop_blocks_tools(tmp_path: Path):
 
 
 def test_delete_outside_workspace_requires_approval(tmp_path: Path):
-    policy = PolicyEngine(tmp_path)
+    policy = PolicyEngine(tmp_path, full_access=False)
     decision = policy.decide(
         ToolRequest(tool="files.delete", arguments={"path": "/tmp/not_in_workspace.txt"})
     )
@@ -23,8 +23,29 @@ def test_delete_outside_workspace_requires_approval(tmp_path: Path):
     assert decision.approval_id
 
 
+def test_full_access_allows_outside_workspace_and_shell(tmp_path: Path):
+    policy = PolicyEngine(tmp_path, full_access=True)
+    decision = policy.decide(
+        ToolRequest(tool="files.delete", arguments={"path": "/tmp/not_in_workspace.txt"})
+    )
+    assert decision.allowed is True
+    shell = policy.decide(ToolRequest(tool="shell.run", arguments={"command": "dir C:\\"}))
+    assert shell.allowed is True
+    web = policy.decide(ToolRequest(tool="web.search", arguments={"query": "python"}))
+    assert web.allowed is True
+
+
+def test_full_access_still_blocks_catastrophic_shell(tmp_path: Path):
+    policy = PolicyEngine(tmp_path, full_access=True)
+    decision = policy.decide(
+        ToolRequest(tool="shell.run", arguments={"command": "format c: /y"})
+    )
+    assert decision.allowed is False
+    assert decision.requires_approval is True
+
+
 def test_untrusted_exe_requires_approval(tmp_path: Path):
-    policy = PolicyEngine(tmp_path)
+    policy = PolicyEngine(tmp_path, full_access=False)
     decision = policy.decide(
         ToolRequest(
             tool="process.start",
@@ -35,7 +56,7 @@ def test_untrusted_exe_requires_approval(tmp_path: Path):
 
 
 def test_approval_task_grant(tmp_path: Path):
-    policy = PolicyEngine(tmp_path)
+    policy = PolicyEngine(tmp_path, full_access=False)
     decision = policy.decide(
         ToolRequest(
             tool="files.delete",

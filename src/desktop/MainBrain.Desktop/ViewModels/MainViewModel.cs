@@ -74,7 +74,8 @@ public partial class MainViewModel : ObservableObject
     public MainViewModel(ApiClient api)
     {
         _api = api;
-        WorkspacePath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        // full_access: darba sakne = lietotāja profils (viss dators caur absolūtiem ceļiem)
+        WorkspacePath = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         // Multi režīmā paneļi; Focus sākas tukšs (home) — programma parādās tikai kad tiek lietota
         Panels.Add(new WorkPanelViewModel("Iegultais pārlūks", "embedded_browser") { IsVisible = false });
         Panels.Add(new WorkPanelViewModel("Redaktors", "editor") { IsVisible = false });

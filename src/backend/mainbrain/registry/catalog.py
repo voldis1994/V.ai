@@ -55,6 +55,8 @@ BROWSER_TOOLS = [
     "browser.click",
     "browser.fill",
     "browser.screenshot",
+    "web.search",
+    "http.fetch",
     "files.write",
     "files.read",
     "logs.inspect",

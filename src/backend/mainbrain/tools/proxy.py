@@ -90,6 +90,8 @@ class ToolProxy:
             "screen.capture": self._via_bridge,
             "logs.inspect": self._logs_inspect,
             "resources.inspect": self._resources_inspect,
+            "web.search": self._web_search,
+            "http.fetch": self._http_fetch,
         }
         self._processes: dict[int, subprocess.Popen[str]] = {}
         self._owned_pids: set[int] = set()
@@ -454,5 +456,47 @@ class ToolProxy:
             "disk_free_gb": round(shutil.disk_usage(str(self.workspace or Path.cwd())).free / (1024**3), 2),
             "platform": sys.platform,
             "python": sys.version.split()[0],
+            "full_access": bool(getattr(self.policy, "full_access", False)),
             "timestamp": utc_now().isoformat(),
         }
+
+    def _web_search(self, request: ToolRequest) -> dict[str, Any]:
+        import asyncio
+
+        from mainbrain.tools.web import web_search
+
+        query = str(request.arguments.get("query") or request.arguments.get("q") or "")
+        max_results = int(request.arguments.get("max_results") or 5)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            # Sync handler inside async API — palaid jaunā pavedienā
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(lambda: asyncio.run(web_search(query, max_results=max_results))).result(
+                    timeout=45
+                )
+        return asyncio.run(web_search(query, max_results=max_results))
+
+    def _http_fetch(self, request: ToolRequest) -> dict[str, Any]:
+        import asyncio
+
+        from mainbrain.tools.web import http_fetch
+
+        url = str(request.arguments.get("url") or "")
+        max_chars = int(request.arguments.get("max_chars") or 12000)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(lambda: asyncio.run(http_fetch(url, max_chars=max_chars))).result(
+                    timeout=60
+                )
+        return asyncio.run(http_fetch(url, max_chars=max_chars))
