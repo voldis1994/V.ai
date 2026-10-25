@@ -1,0 +1,9 @@
+# Windows batch must use CRLF or CMD parses labels/echo as garbage commands
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# PowerShell on Windows is happier with CRLF; scripts remain portable
+*.ps1 text eol=crlf
+
+# Keep shell scripts LF
+*.sh text eol=lf
