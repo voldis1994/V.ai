@@ -19,6 +19,20 @@ def google_url(query: str) -> str:
     return f"https://www.google.com/search?q={quote_plus(query.strip())}"
 
 
+def bing_url(query: str) -> str:
+    return f"https://www.bing.com/search?q={quote_plus(query.strip())}"
+
+
+def search_engine_url(query: str, *, engine: str = "google") -> str:
+    """Noklusējums = Google (lietotājs prasīja ne tikai DuckDuckGo)."""
+    e = (engine or "google").strip().lower()
+    if e in {"ddg", "duckduckgo", "duck"}:
+        return duckduckgo_url(query)
+    if e in {"bing"}:
+        return bing_url(query)
+    return google_url(query)
+
+
 def resolve_app(name: str) -> tuple[str, list[str]] | None:
     """Atgriež (program, args) Windows/Linux tipiskām programmām."""
     n = (name or "").lower().strip()
@@ -203,11 +217,11 @@ class PhysicalActor:
             "performed": started.ok,
         }
 
-    def search_and_open(self, query: str, *, via_bridge: bool = False) -> dict[str, Any]:
-        url = duckduckgo_url(query)
+    def search_and_open(self, query: str, *, via_bridge: bool = False, engine: str = "google") -> dict[str, Any]:
+        url = search_engine_url(query, engine=engine)
         # via_bridge=False: Desktop PiP jau rāda URL; netraucējam ar pipe
         opened = self.open_url(url, via_bridge=via_bridge)
-        return {"query": query, "url": url, **opened}
+        return {"query": query, "url": url, "engine": engine, **opened}
 
     def write_text_file(self, path: Path, content: str) -> dict[str, Any]:
         """Tikai ieraksta failu — bez Notepad/bridge (ātri, bez deadlock)."""

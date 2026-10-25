@@ -8,22 +8,110 @@ from urllib.parse import quote_plus, unquote
 import httpx
 
 
+def _browser_headers() -> dict[str, str]:
+    return {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+        "Accept-Language": "lv,en-US;q=0.8,en;q=0.7",
+    }
+
+
+async def _search_google_html(client: httpx.AsyncClient, q: str, *, limit: int = 6) -> list[dict[str, str]]:
+    """Google HTML rezultāti (bez API atslēgas)."""
+    out: list[dict[str, str]] = []
+    try:
+        r = await client.get(
+            "https://www.google.com/search",
+            params={"q": q, "hl": "lv", "num": str(max(limit, 5))},
+        )
+        if r.status_code >= 400:
+            return out
+        text = r.text
+        # Klasiskie rezultātu bloki
+        for m in re.finditer(
+            r'<a[^>]+href="/(?:url\?q=|url\?.*?q=)(https?://[^"&]+)[^"]*"[^>]*>.*?'
+            r'(?:<h3[^>]*>(.*?)</h3>|<div[^>]*role="heading"[^>]*>(.*?)</div>)',
+            text,
+            re.I | re.S,
+        ):
+            url = unquote(m.group(1))
+            title = html_lib.unescape(re.sub(r"<[^>]+>", "", m.group(2) or m.group(3) or "")).strip()
+            if not url.startswith("http") or "google." in url.lower():
+                continue
+            out.append({"title": (title or url)[:120], "url": url, "snippet": (title or "")[:400], "engine": "google"})
+            if len(out) >= limit:
+                break
+        # Fallback: vienkārši /url?q=
+        if len(out) < 2:
+            for m in re.finditer(r'/url\?q=(https?://[^&"]+)&', text):
+                url = unquote(m.group(1))
+                if "google." in url.lower() or "webcache" in url.lower():
+                    continue
+                if any(x["url"] == url for x in out):
+                    continue
+                out.append({"title": url.split("/")[2][:80], "url": url, "snippet": "", "engine": "google"})
+                if len(out) >= limit:
+                    break
+    except Exception:  # noqa: BLE001
+        return out
+    return out
+
+
+async def _search_bing_html(client: httpx.AsyncClient, q: str, *, limit: int = 5) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    try:
+        r = await client.get("https://www.bing.com/search", params={"q": q, "setlang": "lv"})
+        if r.status_code >= 400:
+            return out
+        text = r.text
+        for m in re.finditer(
+            r'<li class="b_algo".*?<h2[^>]*>\s*<a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a>.*?'
+            r'(?:<p>|class="b_caption".*?<p[^>]*>)(.*?)</p>',
+            text,
+            re.I | re.S,
+        ):
+            url = html_lib.unescape(m.group(1)).strip()
+            title = html_lib.unescape(re.sub(r"<[^>]+>", "", m.group(2))).strip()
+            snip = html_lib.unescape(re.sub(r"<[^>]+>", "", m.group(3))).strip()
+            if url.startswith("http"):
+                out.append({"title": title[:120], "url": url, "snippet": snip[:400], "engine": "bing"})
+            if len(out) >= limit:
+                break
+    except Exception:  # noqa: BLE001
+        return out
+    return out
+
+
 async def web_search(query: str, *, max_results: int = 5) -> dict[str, Any]:
-    """Meklē internetā (DuckDuckGo Instant Answer + HTML rezultāti)."""
+    """Meklē internetā: Google + Bing + DuckDuckGo (ne tikai DDG)."""
     q = (query or "").strip()
     if not q:
         return {"ok": False, "error": "Tukšs vaicājums", "results": []}
 
     results: list[dict[str, str]] = []
     abstract = ""
-    headers = {
-        "User-Agent": "MainBrainOS/1.0 (+local; full_access)",
-        "Accept": "application/json,text/html",
-    }
+    engines_used: list[str] = []
+    headers = _browser_headers()
 
     try:
         async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=headers) as client:
-            # 1) Instant Answer API
+            # 1) Google (lietotāja prasība)
+            g = await _search_google_html(client, q, limit=max_results)
+            if g:
+                engines_used.append("google")
+                results.extend(g)
+
+            # 2) Bing, ja Google maz rezultātu
+            if len(results) < 3:
+                b = await _search_bing_html(client, q, limit=max_results)
+                if b:
+                    engines_used.append("bing")
+                    results.extend(b)
+
+            # 3) DuckDuckGo Instant Answer + HTML (papildu fakti)
             r = await client.get(
                 "https://api.duckduckgo.com/",
                 params={"q": q, "format": "json", "no_html": 1, "skip_disambig": 1},
@@ -33,41 +121,31 @@ async def web_search(query: str, *, max_results: int = 5) -> dict[str, Any]:
                 abstract = str(data.get("AbstractText") or "").strip()
                 abs_url = str(data.get("AbstractURL") or "").strip()
                 if abstract:
+                    engines_used.append("duckduckgo")
                     results.append(
                         {
                             "title": str(data.get("Heading") or q)[:120],
                             "url": abs_url or "https://duckduckgo.com/",
                             "snippet": abstract[:500],
+                            "engine": "duckduckgo",
                         }
                     )
-                for topic in (data.get("RelatedTopics") or [])[:8]:
+                for topic in (data.get("RelatedTopics") or [])[:5]:
                     if isinstance(topic, dict) and topic.get("Text"):
                         results.append(
                             {
                                 "title": str(topic.get("Text") or "")[:80],
                                 "url": str(topic.get("FirstURL") or ""),
                                 "snippet": str(topic.get("Text") or "")[:400],
+                                "engine": "duckduckgo",
                             }
                         )
-                    elif isinstance(topic, dict) and topic.get("Topics"):
-                        for sub in topic["Topics"][:3]:
-                            if isinstance(sub, dict) and sub.get("Text"):
-                                results.append(
-                                    {
-                                        "title": str(sub.get("Text") or "")[:80],
-                                        "url": str(sub.get("FirstURL") or ""),
-                                        "snippet": str(sub.get("Text") or "")[:400],
-                                    }
-                                )
 
-            # 2) HTML rezultāti — īsti ārējie URL (vienmēr, lai deep_research var lasīt lapas)
-            if len([r for r in results if "duckduckgo.com" not in (r.get("url") or "")]) < 2:
-                html = await client.get(
-                    f"https://html.duckduckgo.com/html/?q={quote_plus(q)}",
-                )
+            if len([x for x in results if "duckduckgo.com" not in (x.get("url") or "")]) < 2:
+                html = await client.get(f"https://html.duckduckgo.com/html/?q={quote_plus(q)}")
                 if html.status_code < 400:
+                    engines_used.append("duckduckgo-html")
                     text = html.text
-                    # vienkārši result bloki
                     for m in re.finditer(
                         r'uddg=([^&"]+).*?class="result__a"[^>]*>(.*?)</a>.*?'
                         r'class="result__snippet"[^>]*>(.*?)</(?:a|td|div)',
@@ -79,29 +157,14 @@ async def web_search(query: str, *, max_results: int = 5) -> dict[str, Any]:
                         snip = html_lib.unescape(re.sub(r"<[^>]+>", "", m.group(3))).strip()
                         if url.startswith("http") and "duckduckgo.com" not in url.lower():
                             results.append(
-                                {"title": title[:120], "url": url, "snippet": snip[:400]}
+                                {
+                                    "title": title[:120],
+                                    "url": url,
+                                    "snippet": snip[:400],
+                                    "engine": "duckduckgo",
+                                }
                             )
-                        if len(results) >= max_results + 4:
-                            break
-
-            # 3) lite.duckduckgo — papildu īsti linki, ja HTML regex nedeva
-            real_n = len([x for x in results if "duckduckgo.com" not in (x.get("url") or "")])
-            if real_n < 2:
-                lite = await client.get(f"https://lite.duckduckgo.com/lite/?q={quote_plus(q)}")
-                if lite.status_code < 400:
-                    for m in re.finditer(
-                        r'href="(https?://[^"]+)"[^>]*>([^<]{5,120})</a>',
-                        lite.text,
-                        re.I,
-                    ):
-                        url = html_lib.unescape(m.group(1).strip())
-                        title = html_lib.unescape(m.group(2)).strip()
-                        if "duckduckgo.com" in url.lower():
-                            continue
-                        if any(b in url.lower() for b in ("facebook.com/tr", "google.com/ads")):
-                            continue
-                        results.append({"title": title[:120], "url": url, "snippet": title[:400]})
-                        if len([x for x in results if "duckduckgo.com" not in (x.get("url") or "")]) >= max_results + 2:
+                        if len(results) >= max_results + 6:
                             break
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc), "results": [], "query": q}
@@ -126,7 +189,8 @@ async def web_search(query: str, *, max_results: int = 5) -> dict[str, Any]:
         "query": q,
         "abstract": abstract,
         "results": uniq,
-        "search_url": f"https://duckduckgo.com/?q={quote_plus(q)}",
+        "engines": engines_used or ["google"],
+        "search_url": f"https://www.google.com/search?q={quote_plus(q)}",
     }
 
 
@@ -415,6 +479,8 @@ async def deep_research(
         "results": ranked,
         "pages": pages,
         "facts": facts[:8],
-        "search_url": search.get("search_url") or "",
+        "search_url": search.get("search_url")
+        or f"https://www.google.com/search?q={quote_plus(q)}",
+        "engines": search.get("engines") or [],
         "error": search.get("error"),
     }

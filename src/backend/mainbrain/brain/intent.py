@@ -150,7 +150,12 @@ def extract_topic(message: str) -> str:
         message,
     )
     if m2:
-        return m2.group(1).strip(" ?.!,;:")
+        topic = m2.group(1).strip(" ?.!,;:")
+        # «sameklē kas ir FastAPI» → «FastAPI» (nevis viss teikums uz Google)
+        m_kas = re.match(r"(?i)^(?:kas\s+(?:ir|bija)|what\s+is|who\s+is)\s+(.+)$", topic)
+        if m_kas:
+            topic = m_kas.group(1).strip(" ?.!,;:")
+        return topic
     m3 = re.search(r"(?i)\bkas\s+ir\s+(.+?)[\s?]*$", message)
     if m3:
         return m3.group(1).strip(" ?.!,;:")

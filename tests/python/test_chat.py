@@ -191,6 +191,41 @@ def test_learn_latvian_never_bounces_to_pasaki_konkreti():
     asyncio.run(run())
 
 
+def test_meta_why_english_does_not_google_the_question():
+    """Ekrānšāviņš: jautājums par mani → NE Google reklāmas / Latvian Easy."""
+    import asyncio
+
+    from mainbrain.brain.intent import fold_diacritics
+    from mainbrain.contracts.schemas import ChatRequest
+
+    svc = ChatService(models=None, brain=None)  # type: ignore[arg-type]
+    msg = "ja tu esi iemacijies latviešu valodu kapēc atbildi angliski ?"
+
+    assert ChatService._is_about_assistant(msg)
+    assert not ChatService._should_web_search(msg)
+    meta = ChatService._meta_about_self(msg)
+    assert meta
+    assert "latvisk" in fold_diacritics(meta)
+
+    async def run():
+        r = await svc.chat(ChatRequest(message=msg, session_id="meta-en"))
+        low = fold_diacritics(r.reply)
+        assert "latvian easy" not in low
+        assert "google.com" not in low or "meklēju tikai" in low or "latvisk" in low
+        assert "avotu satura" not in low
+        assert "latvisk" in low
+        # Nedrīkst saglabāt jautājumu kā knowledge faila tēmu caur web
+        assert "saglabaju faila" not in low or "prefer" in low
+
+    asyncio.run(run())
+
+
+def test_should_web_search_only_for_facts():
+    assert ChatService._should_web_search("kas ir Python?")
+    assert not ChatService._should_web_search("kāpēc tu atbildi angliski?")
+    assert not ChatService._should_web_search("sveiki kā iet")
+
+
 def test_meta_ollama_and_learning_without_llm():
     import asyncio
 

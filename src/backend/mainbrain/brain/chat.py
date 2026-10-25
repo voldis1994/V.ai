@@ -8,7 +8,7 @@ from typing import Any
 from pathlib import Path
 from urllib.parse import quote
 
-from mainbrain.brain.actions import PhysicalActor, duckduckgo_url
+from mainbrain.brain.actions import PhysicalActor, duckduckgo_url, google_url, search_engine_url
 from mainbrain.brain.intent import (
     Intent,
     classify_intent,
@@ -169,7 +169,8 @@ class ChatService:
                 session,
                 history,
                 "Sveiki! Esmu Main Brain — brīvs lokāls AI datorā (bez Ollama). "
-                "Saki «sameklē …», «uztaisi …» vai «atver …» — daru uzreiz. Ko darām?",
+                "Saki «iemācies …», «sameklē …», «uztaisi …» vai «atver …» — daru uzreiz. "
+                "Uz jautājumiem par mani atbildu pats, bez Google. Ko darām?",
             )
 
         if intent == Intent.MATH:
@@ -177,25 +178,33 @@ class ChatService:
             if math_reply:
                 return self._finish(session, history, math_reply)
 
-        # Meta TIKAI jautājumiem «vai tu mācies?» — NE komandai «iemācies X»
-        if intent not in {Intent.LEARN, Intent.BUILD, Intent.SEARCH, Intent.PERSON, Intent.EXPLAIN}:
-            meta = self._meta_about_self(user_msg)
-            if meta:
-                return self._finish(session, history, meta, user_msg=user_msg)
+        folded_msg = fold_diacritics(user_msg)
+
+        # Jautājumi PAR MANI / Ollama / valodu — LOKĀLI, BEZ Google
+        # («kāpēc tu atbildi angliski?», «vai Ollama?») — NE komanda «iemācies X»
+        meta = self._meta_about_self(user_msg)
+        if meta:
+            if self._is_about_assistant(user_msg) or "latvisk" in fold_diacritics(meta):
+                self._remember(
+                    "prefer_latviesu",
+                    "Lietotājs prasa latviešu atbildes. Atbildu latviski, "
+                    "ne copy-paste angļu reklāmas no meklētāja.",
+                    kind="learn",
+                )
+            return self._finish(session, history, meta, user_msg=user_msg)
 
         # Valodu īsie FAQ — TIKAI jautājumi «kādas valodas?» — NE «iemācies latviešu valodu»
-        folded_msg = fold_diacritics(user_msg)
         if intent not in {Intent.LEARN, Intent.SEARCH, Intent.EXPLAIN, Intent.PERSON, Intent.BUILD}:
             if re.search(r"(?i)\b(kadas?\s+valod|which\s+language|scottish|scotland|skotij)", folded_msg):
                 if re.search(r"(?i)(scottish|scotland|skot)", folded_msg):
                     reply = (
                         "Skotijā oficiāli lieto angļu; papildus — skotu (Scots) un skotu gēlu. "
-                        "Es atbildu latviski un angliski."
+                        "Es atbildu latviski."
                     )
                 else:
                     reply = (
-                        "Es saprotu un atbildu latviešu un angļu valodā. "
-                        "Citas valodas — vāji (lokālais modelis)."
+                        "Es saprotu un atbildu latviešu valodā (arī angļu saprotu). "
+                        "Uz tevi runāšu latviski — ne copy-paste no Google."
                     )
                 return self._finish(session, history, reply, user_msg=user_msg)
 
@@ -206,14 +215,14 @@ class ChatService:
         if intent == Intent.LEARN and (not topic or topic.lower().strip() in learn_empty):
             ask = (
                 "Labi — ko tieši iegaumēt? Piemēram: «iemācies kas ir Python» "
-                "vai «iemācies Edgars Gaidulis». Es sameklēšu, saglabāšu failā un atmiņā."
+                "vai «iemācies Edgars Gaidulis». Es sameklēšu (Google), saglabāšu failā un atmiņā."
             )
             return self._finish(session, history, ask, user_msg=user_msg)
 
-        # BRĪVAIS REŽĪMS: jautājumi / personas / meklēšana / skaidrojumi / iemācies
-        # → pārlūks + fakti + SAGLABĀ fails. NEKAD negaidām Ollama / LLM.
+        # Internets TIKAI: sameklē / iemācies / izskaidro / persona / skaidri faktu jautājumi
+        # NE katram «?» — citādi «kāpēc tu atbildi angliski?» iet uz Google reklāmām
         if intent in {Intent.PERSON, Intent.SEARCH, Intent.EXPLAIN, Intent.LEARN} or (
-            intent == Intent.CHAT and self._looks_like_question(user_msg)
+            intent == Intent.CHAT and self._should_web_search(user_msg)
         ):
             return await self._search_and_act(
                 req,
@@ -225,8 +234,11 @@ class ChatService:
                 learn=intent == Intent.LEARN,
             )
 
-        # Drošības tīkls: ja tekstā ir iemācies/sameklē, NEKAD nekrīt uz «pasaki konkrēti»
-        if re.search(r"(?i)\b(iemacies|iemacities|samekle|mekle|izskaidro|learn|search|explain)\b", folded_msg):
+        # Drošības tīkls: eksplicīta komanda iemācies/sameklē — bet NE «kāpēc tu iemācījies…»
+        if (
+            re.search(r"(?i)\b(iemacies|iemacities|samekle|mekle|izskaidro|learn|search|explain)\b", folded_msg)
+            and not self._is_about_assistant(user_msg)
+        ):
             return await self._search_and_act(
                 req,
                 session,
@@ -407,10 +419,11 @@ class ChatService:
         if intent == Intent.PERSON:
             search_q = q
 
-        url = duckduckgo_url(search_q)
+        # Google pirmais (lietotājs prasīja ne tikai DuckDuckGo)
+        url = search_engine_url(search_q, engine="google")
         actor = self._actor()
         # TIKAI Desktop PiP — NEATVERAM ārējo Chrome/Edge
-        opened: dict[str, Any] = {"url": url, "pip": "desktop-only"}
+        opened: dict[str, Any] = {"url": url, "pip": "desktop-only", "engine": "google"}
 
         # PERSON: lokālā atmiņa bieži piesārņota ar veciem hello.py — prioritāte = internets
         local_hits = self._search_local_knowledge(
@@ -475,7 +488,7 @@ class ChatService:
             actor=actor,
         )
 
-        act_parts = [f"[Darbība] Meklēšana → {url}"]
+        act_parts = [f"[Darbība] Meklēšana (Google) → {url}"]
         if isinstance(opened, dict) and opened.get("error"):
             act_parts.append(f"({opened.get('error')})")
         if saved_path:
@@ -755,7 +768,7 @@ class ChatService:
             m = re.search(r"(https?://\S+)", user_msg)
             url = m.group(1) if m else "https://duckduckgo.com/"
             if not m and re.search(r"(?i)meklē|search|samekl", user_msg):
-                url = duckduckgo_url(extract_topic(user_msg))
+                url = google_url(extract_topic(user_msg))
             try:
                 actor.open_url(url)
             except Exception as exc:  # noqa: BLE001
@@ -864,45 +877,147 @@ class ChatService:
         )
 
     @staticmethod
+    def _is_about_assistant(text: str) -> bool:
+        """Jautājums MAN (tu/tev/you) — nedrīkst mest Google ar visu teikumu."""
+        f = fold_diacritics(text or "")
+        if not f:
+            return False
+        # Tīra komanda «iemācies X» bez «tu/kāpēc atbildi» — NAV par asistentu
+        if re.match(r"(?i)^\s*(iemacies|iemacities|iemaci|learn|apgut|apgusti)\b.+$", f):
+            if not re.search(r"(?i)\b(tu|tev|tevi|you|your|kapec|why|atbild)\b", f):
+                return False
+        about_you = bool(re.search(r"(?i)\b(tu|tev|tevi|tava|tavas|you|your|yourself)\b", f))
+        about_behavior = bool(
+            re.search(
+                r"(?i)\b("
+                r"atbild|atbildi|runa|runā|runa|anglisk|latvies|valod|"
+                r"macies|macijies|iemacijies|neiemac|neko\s+neiemac|"
+                r"saprot|nesaprot|zini|proti|vari|spej|dari|dar|"
+                r"ollama|model|gguf|learn|speak|answer|reply|english|latvian"
+                r")\b",
+                f,
+            )
+        )
+        if about_you and about_behavior:
+            return True
+        if re.search(
+            r"(?i)\b("
+            r"kapec\s+tu|kapec\s+tu|why\s+(do\s+)?you|ja\s+tu\s+esi|"
+            r"vai\s+tu\s+|do\s+you\s+|can\s+you\s+|are\s+you\s+"
+            r")",
+            f,
+        ):
+            return True
+        return False
+
+    @staticmethod
+    def _should_web_search(text: str) -> bool:
+        """Faktu jautājumi → web. Jautājumi par mani / čau → NĒ."""
+        if ChatService._is_about_assistant(text):
+            return False
+        f = fold_diacritics(text or "")
+        # Eksplicīti faktu šabloni
+        if re.search(
+            r"(?i)\b("
+            r"kas\s+ir|kas\s+bija|who\s+is|who\s+was|what\s+is|"
+            r"kur\s+atrodas|kad\s+dzimis|biograf|"
+            r"informacij|dokumentac|wikipedia"
+            r")\b",
+            f,
+        ):
+            return True
+        # «?» VIENS pats ar «tu» jau noraidīts; citi īsi čau — nē
+        if len(f) < 12:
+            return False
+        # Garš jautājums bez «tu» — iespējams fakts, bet bez eksplicīta sameklē
+        # NEDARĀM auto-Google (tas bija bugs). Tikai skaidri faktu vārdi.
+        return False
+
+    @staticmethod
     def _meta_about_self(user_msg: str) -> str | None:
         """Tikai JAUTĀJUMI par sevi — ne komanda «iemācies X» (to dara LEARN ceļš)."""
-        t = (user_msg or "").strip()
+        t = normalize_user_text(user_msg or "")
         if not t:
             return None
-        # Komanda «iemācies …» / «learn …» ar tēmu — NAV meta
-        if re.match(r"(?i)^\s*(iemācies|iemāci|iemācīties|learn|teach)\b.+", t):
-            return None
-        if re.match(r"(?i)^\s*(iemācies|iemāci|learn)\s*$", t):
+        f = fold_diacritics(t)
+        # Komanda «iemācies …» / «learn …» ar tēmu (bez «tu/kāpēc») — NAV meta
+        if re.match(r"(?i)^\s*(iemācies|iemāci|iemācīties|iemacies|learn|teach|apgūt|apgut)\b.+", t):
+            if not ChatService._is_about_assistant(t):
+                return None
+        if re.match(r"(?i)^\s*(iemācies|iemāci|iemacies|learn)\s*$", t):
             return None
 
+        about_lang = bool(
+            re.search(
+                r"(?i)("
+                r"anglisk|english|latvies|latvian|valod|"
+                r"atbildi\s+angl|runa\s+angl|speak\s+english|answer\s+in\s+english|"
+                r"kapec\s+.*angl|why\s+.*english"
+                r")",
+                f,
+            )
+        )
         about_learn = bool(
             re.search(
                 r"(?i)("
-                r"vai\s+tu\s+(pati?\s+)?māc|kā\s+tu\s+māc|vai\s+mācies|"
-                r"pati?\s+māc|self[- ]?learn|"
+                r"vai\s+tu\s+(pats?|pati)?\s*mac|ka\s+tu\s+mac|vai\s+macies|"
+                r"pats?\s+mac|pati\s+mac|self[- ]?learn|neiemac|neko\s+neiemac|"
+                r"iemacijies|kapec\s+.*mac|\bmacies\b|\bmācies\b|"
                 r"learn(s|ing)?\s+(by\s+itself|alone|automatically)|"
-                r"do\s+you\s+learn|can\s+you\s+learn"
+                r"do\s+you\s+learn|can\s+you\s+learn|why\s+.*(learn|don.t\s+learn)"
                 r")",
-                t,
+                f,
             )
         )
-        about_ollama = bool(re.search(r"(?i)\bollama\b", t))
+        about_search = bool(
+            re.search(
+                r"(?i)("
+                r"duckduckgo|google|bing|kapec\s+.*mekl|why\s+.*search|"
+                r"katru\s+jautaj|vienmer\s+mekl|always\s+search"
+                r")",
+                f,
+            )
+        )
+        about_ollama = bool(re.search(r"(?i)\bollama\b", f))
         about_model = bool(
-            re.search(r"(?i)\b(gguf|llama\.?cpp|kāds\s+model|kurš\s+model|qwen)\b", t)
+            re.search(r"(?i)\b(gguf|llama\.?cpp|kads\s+model|kurs\s+model|qwen)\b", f)
         )
-        if not (about_learn or about_ollama or about_model):
+        about_you = ChatService._is_about_assistant(t)
+
+        if not (about_learn or about_ollama or about_model or about_lang or about_search or about_you):
             return None
+
         parts: list[str] = []
-        if about_learn:
+        if about_lang:
             parts.append(
-                "Jā — es mācos no mūsu sarunām: labās atbildes lieku atmiņā. "
-                "Lai iegaumētu konkrētu tēmu UZREIZ, saki «iemācies …» — "
-                "tad sameklēšu internetā, saglabāšu failā un atmiņā."
+                "Atvaino — es ATBILDĒŠU LATVISKI. "
+                "Agrāk kļūdaini ielādēju angļu tekstu no meklētāja un izskatījās, ka «runāju angliski». "
+                "Tas nebija mācīšanās; tas bija slikts copy-paste. "
+                "Tagad uz tevi runāju latviski, un «iemācies …» liek faktus atmiņā saviem vārdiem."
             )
-            if about_model or about_ollama:
-                parts.append(
-                    "(Tehniski: atmiņa ir lokāla zināšanu bāze, ne modeļa svaru pārtrenēšana.)"
-                )
+        if about_search:
+            parts.append(
+                "Katru jautājumu uz Google/DuckDuckGo NESŪTU. "
+                "Meklēju tikai kad saki «sameklē / iemācies / izskaidro» vai skaidru faktu («kas ir …»). "
+                "Jautājumus par mani atbildu pats. Meklētājs tagad: Google (ar Bing/DDG rezerves)."
+            )
+        if about_learn and not about_lang:
+            parts.append(
+                "Jā — mācos: labās atbildes un «iemācies …» rezultātus lieku lokālajā atmiņā un failos. "
+                "Tas NAV modeļa svaru pārtrenēšana. "
+                "Lai iemācītos tēmu UZREIZ: «iemācies kas ir Python» — sameklēšu Google, sintezēšu latviski, saglabāšu."
+            )
+        elif about_learn and about_lang:
+            parts.append(
+                "Kad saki «iemācies latviešu valodu», es iegaumēju preferenci runāt latviski "
+                "un varu sameklēt faktus — bet NEADU tevis jautājumu kā Google vaicājumu."
+            )
+        if about_you and not parts:
+            parts.append(
+                "Esmu Main Brain — lokāls AI tavā datorā. "
+                "Atbildu latviski. Meklēju internetā (Google) tikai pēc skaidras komandas. "
+                "Mācos ar «iemācies …»."
+            )
         if about_ollama and not about_model:
             parts.append(
                 "Ollama netiek izmantota. Strādāju ar lokālo modeli datorā (llama-server)."
@@ -915,7 +1030,7 @@ class ChatService:
             parts.append(
                 "Ollama netiek kustināta. Primārais ir lokālais llama-server + modelis datorā."
             )
-        return " ".join(parts)
+        return " ".join(parts) if parts else None
 
     def _internet_enabled(self) -> bool:
         runtime = getattr(self.brain, "runtime", None)

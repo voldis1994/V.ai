@@ -789,13 +789,13 @@ def test_write_report():
 
     # --- Pārlūks ---
     def _browser_operator(self, agent, goal, inputs, model_note):
-        from mainbrain.brain.actions import PhysicalActor, duckduckgo_url
+        from mainbrain.brain.actions import PhysicalActor, google_url
 
         actor = PhysicalActor(self.tools)
         url = inputs.get("url")
         if not url:
             q = str(inputs.get("query") or goal or "").strip()
-            url = duckduckgo_url(q) if q else "https://duckduckgo.com/"
+            url = google_url(q) if q else "https://www.google.com/"
         opened = actor.open_url(str(url))
         webview_ok = bool((opened.get("webview") or {}).get("ok"))
         system_ok = bool((opened.get("system_browser") or {}).get("ok"))
