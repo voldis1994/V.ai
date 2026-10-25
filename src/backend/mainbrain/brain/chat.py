@@ -22,35 +22,35 @@ from mainbrain.core.ids import utc_now
 from mainbrain.models.router import ModelRouter
 
 # Īss budžets — darbības (pārlūks/faili) NEDRĪKST gaidīt lēno LLM / Ollama
-_CHAT_LLM_BUDGET_SEC = 22.0
-_CHAT_RETRY_BUDGET_SEC = 0.0  # bez otrā LLM mēģinājuma — ātrums > perfekcija
+_CHAT_LLM_BUDGET_SEC = 28.0
+_CHAT_RETRY_BUDGET_SEC = 8.0  # īss 2. mēģinājums, ja 1. atbilde ir junk
 
 
-SYSTEM_CHAT = """Tu esi Main Brain — lokāls Windows AI (llama.cpp + GGUF). Ollama NAV ieslēgta.
-full_access=ON: drīksti lietot VISU datoru, programmas un internetu (arī publisku info par cilvēkiem).
+SYSTEM_CHAT = """Tu esi Main Brain — lokāls Windows AI (llama.cpp + GGUF), kā ChatGPT, bet datorā. Ollama NAV ieslēgta.
+full_access=ON: drīksti lietot datoru, programmas un internetu.
 Noteikumi:
-1) Atbildi latviešu valodā — skaidri, konkrēti, bez tukšām frāzēm.
-2) Atbildi TIKAI uz jautājumu. Nekad neatkārto lietotāja tekstu.
+1) ATBILDI LATVIEŠU VALODĀ — dabiski, kā cilvēks, ne copy-paste no angļu lapām.
+2) Atbildi UZ JAUTĀJUMU. Nenesaki «pasaki sameklē/uztaisi» ja vari atbildēt pats.
 3) Ja dots konteksts (zināšanas / internets) — balsties uz to; neizdomā faktus.
 4) Matemātiku rēķini precīzi.
-5) NEDRĪKSTI atteikties no meklēšanas / pārlūka / personu publiskas info — lietotājs to atļāvis.
-6) Ja nezini — saki «Nezinu» un dari «sameklē …» / «uztaisi …».
-7) Īsas atbildes (2–6 teikumi), ja nav lūgts citādi."""
+5) Nedrīksti atteikties no publiskas info / personu meklēšanas — lietotājs to atļāvis.
+6) Ja nezini — saki godīgi un piedāvā «sameklē …».
+7) 2–8 teikumi, ja nav lūgts citādi. Bez meta-frāzēm par «bez modeļa gaidīšanas»."""
 
 SYSTEM_EXPLAIN = """Tu esi Main Brain skolotājs (llama.cpp, bez Ollama).
-Izskaidro latviešu valodā:
+Izskaidro LATVISKI saviem vārdiem (kā ChatGPT):
 1) Kas tas ir (1–2 teikumi)
 2) Kā strādā (2–4 punkti)
 3) Neliels piemērs, ja der
-Izmanto doto kontekstu. Bez atkārtojumiem un bez muļķībām."""
+Izmanto doto kontekstu. NEKOPĒ angļu reklāmas. Bez atkārtojumiem."""
 
-SYSTEM_SEARCH = """Tu esi Main Brain ar PILNU piekļuvi internetam un datoram (full_access).
-Lietotājs EXPLICĪTI atļāvis meklēt publisku info (arī par cilvēkiem).
-1) Apkopo TIKAI no dotajiem meklēšanas rezultātiem — saviem vārdiem latviski
-2) Norādi 1–3 URL
-3) NEDRĪKSTI atteikties («nevaru par personām», «privātums», «noteikumi») — tas ir aizliegts
-4) Ja rezultātu maz — saki to un atsaucies uz atvērto pārlūka meklēšanu
-Bez atkārtojumiem un bez morāles lekcijām."""
+SYSTEM_SEARCH = """Tu esi Main Brain ar PILNU piekļuvi internetam (Google) un datoram.
+1) Apkopo TIKAI no dotajiem meklēšanas rezultātiem — SAVIEM VĀRDIEM LATVISKI
+2) Nedrīkst copy-paste angļu marketingu; pārfrāzē
+3) Norādi 1–3 URL ja ir
+4) NEDRĪKSTI atteikties («nevaru par personām», «privātums») — aizliegts
+5) Ja rezultātu maz — saki to godīgi
+Bez morāles lekcijām."""
 
 _BAD_REPLY = re.compile(
     r"(?i)("
@@ -219,8 +219,8 @@ class ChatService:
             )
             return self._finish(session, history, ask, user_msg=user_msg)
 
-        # Internets TIKAI: sameklē / iemācies / izskaidro / persona / skaidri faktu jautājumi
-        # NE katram «?» — citādi «kāpēc tu atbildi angliski?» iet uz Google reklāmām
+        # Internets: sameklē / iemācies / izskaidro / persona / skaidri faktu «kas ir…»
+        # Parastie jautājumi («kāpēc debesis zilas?») → llama.cpp kā ChatGPT, BEZ Google spam
         if intent in {Intent.PERSON, Intent.SEARCH, Intent.EXPLAIN, Intent.LEARN} or (
             intent == Intent.CHAT and self._should_web_search(user_msg)
         ):
@@ -234,7 +234,7 @@ class ChatService:
                 learn=intent == Intent.LEARN,
             )
 
-        # Drošības tīkls: eksplicīta komanda iemācies/sameklē — bet NE «kāpēc tu iemācījies…»
+        # Drošības tīkls: eksplicīta komanda iemācies/sameklē — bet NE «kāpēc tu…»
         if (
             re.search(r"(?i)\b(iemacies|iemacities|samekle|mekle|izskaidro|learn|search|explain)\b", folded_msg)
             and not self._is_about_assistant(user_msg)
@@ -249,8 +249,22 @@ class ChatService:
                 learn=("iemac" in folded_msg or "learn" in folded_msg or "apgut" in folded_msg),
             )
 
-        # Elementāri uzdevumi — deterministiski, BEZ llama/Ollama gaidīšanas
-        reply = self._reason_local(user_msg, topic)
+        # ChatGPT režīms: īsts llama.cpp (BEZ Ollama) — ne «pasaki konkrēti»
+        local_hits = self._search_local_knowledge(topic) or self._search_local_knowledge(user_msg)
+        reply = await self._llm_task(
+            intent=Intent.CHAT,
+            user_msg=user_msg,
+            topic=topic,
+            history=history,
+            local_hits=local_hits,
+        )
+        if _is_junk(reply) or not (reply or "").strip():
+            if local_hits:
+                reply = self._synthesize_knowledge(topic or user_msg, local_hits, learn=False) or "\n".join(
+                    local_hits[:3]
+                )
+            else:
+                reply = self._reason_local(user_msg, topic)
         if reply and not _is_junk(reply):
             self._remember(topic or user_msg, reply, kind="chat")
         return self._finish(session, history, reply, user_msg=user_msg)
@@ -458,17 +472,30 @@ class ChatService:
             and not self._is_noise_fact(str(h))
             and not self._looks_like_build_log(str(h))
         ]
-        spoken = self._synthesize_knowledge(q or search_q, facts, learn=learn)
+        # ChatGPT stils: llama.cpp sintezē LATVISKI no faktiem (ne raw paste)
+        spoken = ""
+        if facts and self.models is not None:
+            spoken = await self._llm_task(
+                intent=Intent.LEARN if learn else (intent if intent != Intent.PERSON else Intent.SEARCH),
+                user_msg=user_msg,
+                topic=q or search_q,
+                history=history,
+                local_hits=facts[:6],
+            )
+            if _is_junk(spoken):
+                spoken = ""
+        if not spoken:
+            spoken = self._synthesize_knowledge(q or search_q, facts, learn=learn)
         if not spoken:
             spoken = (
-                f"Par «{q or search_q}» sameklēju internetā (DuckDuckGo mazajā lodziņā). "
-                "Īsu, tīru kopsavilkumu no avotiem šoreiz nesaliku — bet meklēšana notika un lodziņu aizveru."
+                f"Par «{q or search_q}» sameklēju Google. "
+                "Īsu kopsavilkumu šoreiz nesanāca — skaties rezultātus labajā lodziņā."
             )
-        # «iemācies latviešu valodu» — nevis «pasaki sameklē», bet apstiprini + saglabā
+        # «iemācies latviešu valodu» — apstiprini + saglabā preferenci
         topic_fold = fold_diacritics(q or search_q)
         if learn and re.search(r"(?i)latvies", topic_fold) and re.search(r"(?i)valod", topic_fold):
             spoken = (
-                "Saprotu — mācos latviešu valodu un atbildēšu latviski, skaidri, saviem vārdiem. "
+                "Saprotu — mācos un atbildēšu latviski, skaidri, saviem vārdiem. "
                 + spoken
             )
             self._remember(
@@ -817,38 +844,35 @@ class ChatService:
         )
 
     def _reason_local(self, user_msg: str, topic: str) -> str:
-        """Objektīva, tūlītēja atbilde BEZ Ollama/llama gaidīšanas."""
+        """Fallback TIKAI ja llama.cpp nav pieejams — nevis galvenais ceļš."""
         local = self._search_local_knowledge(topic) or self._search_local_knowledge(user_msg)
         local = [h for h in local if not self._looks_like_build_log(h) and not self._is_noise_fact(h)]
         if local:
             body = "\n".join(f"• {h[:280]}" for h in local[:3])
             return (
                 f"No atmiņas par «{topic or user_msg}»:\n{body}\n\n"
-                "Ja vajag svaigu info: «sameklē …». Ja mācīties: «iemācies …»."
+                "(llama-server šobrīd neatbildēja — rādu atmiņu. Pārstartē MainBrain.)"
             )
-        # Heuristika — saprot uzdevumu un ROSINA darbību, nevis gaida modeli
         low = fold_diacritics(user_msg or "")
         if re.search(r"(?i)\b(paldies|thanks|ok|okei|labi|super)\b", low) and len(low) < 40:
             return "Labi. Ko darām tālāk?"
         if re.search(r"(?i)\b(palidzi|help|ko\s+tu\s+vari|spej)\b", low):
             return (
-                "Es daru uzreiz datorā (bez Ollama gaidīšanas):\n"
-                "• «iemācies latviešu valodu» — sameklēšu + iemācīšos + saglabāšu\n"
-                "• «sameklē Voldis Sidorovs» — meklēšu + saglabāšu + pastāstīšu\n"
-                "• «uzraksti python hello.py» — uzrakstīšu failu un rādīšu kodu\n"
-                "• «atver notepad» — atvēršu programmu\n"
-                "• «ko tu redzi» — kameras kadrs\n"
-                "• «pasaki …» — balsī (Everita)"
+                "Esmu kā ChatGPT, bet lokāli (llama.cpp, bez Ollama):\n"
+                "• jautā brīvi — atbildēšu latviski\n"
+                "• «iemācies …» / «sameklē …» — Google + atmiņa\n"
+                "• «uztaisi …» — faili/programmas\n"
+                "• «atver notepad» / «pasaki …» / «ko tu redzi»"
             )
-        # NEKAD nesaki «pasaki sameklē/uztaisi», ja lietotājs jau teica iemācies
         if re.search(r"(?i)\b(iemac|learn|samekle|mekle|apgut)\b", low):
             return (
-                f"Saprotu «{user_msg}» — tas ir mācīšanās/meklēšanas uzdevums. "
-                "Mēģinu vēlreiz: saki to pašu, es sameklēšu un iegaumēšu."
+                f"Saprotu «{user_msg}» — mācīšanās/meklēšana. "
+                "Modelis īslaicīgi nav sasniedzams; mēģini vēlreiz vai pārstartē MainBrain."
             )
         return (
-            f"Saprotu: «{user_msg}». Daru bez modeļa gaidīšanas — "
-            "pasaki konkrēti: iemācies / sameklē / uztaisi / atver / pasaki."
+            f"Par «{user_msg}»: lokālais modelis (llama.cpp) šobrīd neatbild. "
+            "Pārstartē MainBrain / FIX_BACKEND.bat — tad atbildēšu kā ChatGPT latviski. "
+            "Ollama netiek gaidīta."
         )
 
     async def _llm_task(
@@ -860,9 +884,139 @@ class ChatService:
         history: list[dict[str, str]],
         local_hits: list[str],
     ) -> str:
-        """Chat vairs NEGAIDA Ollama/llama — tikai lokāla iemeslošana."""
-        _ = (intent, history, local_hits)
-        return self._reason_local(user_msg, topic)
+        """Īsts llama.cpp chat (kā ChatGPT) — Ollama NETIEK saukta."""
+        if self.models is None:
+            return self._reason_local(user_msg, topic)
+
+        if intent in {Intent.EXPLAIN, Intent.LEARN}:
+            system = SYSTEM_EXPLAIN
+            max_tokens = 420
+            role = ModelRole.CODING if self._looks_technical(topic) else ModelRole.REASONING
+        elif intent in {Intent.SEARCH, Intent.PERSON}:
+            system = SYSTEM_SEARCH
+            max_tokens = 360
+            role = ModelRole.REASONING
+        else:
+            system = SYSTEM_CHAT
+            max_tokens = 320
+            role = ModelRole.REASONING
+
+        context_bits = ""
+        if local_hits:
+            joined = "\n- ".join(str(h)[:400] for h in local_hits[:5])
+            context_bits = f"\n\nZināšanas / interneta konteksts (izmanto, pārfrāzē latviski!):\n- {joined}"
+
+        if intent in {Intent.SEARCH, Intent.PERSON}:
+            prompt_user = (
+                f"Lietotājs lūdz sameklēt: {user_msg}\n"
+                f"Tēma: {topic}.{context_bits}\n"
+                "Atbildi latviski, saviem vārdiem, īsākām teikumiem."
+            )
+        elif intent in {Intent.EXPLAIN, Intent.LEARN}:
+            prompt_user = (
+                f"Izskaidro / iemācies: {topic}\n"
+                f"Jautājums: {user_msg}.{context_bits}\n"
+                "Atbildi latviski saviem vārdiem — ne copy-paste."
+            )
+        else:
+            prompt_user = user_msg + (context_bits if context_bits else "")
+
+        messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+        for m in history[-4:]:
+            if m.get("content") == user_msg and m.get("role") == "user":
+                continue
+            content = str(m.get("content") or "")
+            if len(content) > 500:
+                content = content[:500] + "…"
+            if content:
+                messages.append({"role": m["role"], "content": content})
+        messages.append({"role": "user", "content": prompt_user})
+
+        t0 = time.monotonic()
+        try:
+            result = await asyncio.wait_for(
+                self.models.complete_messages(
+                    role=role,
+                    messages=messages,
+                    temperature=0.35,
+                    max_tokens=max_tokens,
+                    frequency_penalty=0.4,
+                    presence_penalty=0.2,
+                    repeat_penalty=1.15,
+                    stop=["\nTu:", "\nUser:", "\nuser:", "\nMain Brain:"],
+                    timeout_sec=_CHAT_LLM_BUDGET_SEC,
+                ),
+                timeout=_CHAT_LLM_BUDGET_SEC + 2.0,
+            )
+        except asyncio.TimeoutError:
+            if local_hits:
+                syn = self._synthesize_knowledge(topic or user_msg, local_hits, learn=intent == Intent.LEARN)
+                if syn:
+                    return syn + "\n\n(Modelis bija lēns — rādu sintezētu kontekstu.)"
+                return "\n".join(str(h)[:280] for h in local_hits[:3]) + "\n\n(Modelis bija pārāk lēns.)"
+            return (
+                "Modelis neatbildēja laikā (CPU). Aizver smagas programmas un mēģini vēlreiz, "
+                "vai UPGRADE_MODEL.bat (ātrāks Q4). Ollama netiek izmantota."
+            )
+        except Exception as exc:  # noqa: BLE001
+            if local_hits:
+                return self._synthesize_knowledge(topic or user_msg, local_hits, learn=False) or str(exc)
+            return self._reason_local(user_msg, topic)
+
+        reply = ""
+        if result.get("ok") and (result.get("text") or "").strip():
+            reply = _clean_reply(str(result["text"]))
+        else:
+            err = str(result.get("error") or "Lokālais modelis nav pieejams")
+            if local_hits:
+                syn = self._synthesize_knowledge(topic or user_msg, local_hits, learn=intent == Intent.LEARN)
+                return (syn or "\n".join(str(h)[:280] for h in local_hits[:3])) + f"\n\n(Modelis: {err})"
+            return f"{err} Palaid FIX_BACKEND.bat / pārstartē MainBrain (llama-server)."
+
+        elapsed = time.monotonic() - t0
+        if _is_junk(reply) and elapsed < _CHAT_RETRY_BUDGET_SEC:
+            remain = max(8.0, _CHAT_LLM_BUDGET_SEC - elapsed - 1.0)
+            try:
+                retry = await asyncio.wait_for(
+                    self.models.complete_messages(
+                        role=role,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Atbildi latviešu valodā skaidri un īsākām, kā ChatGPT. "
+                                    "Ja nezini — «Nezinu.» Bez angļu copy-paste."
+                                ),
+                            },
+                            {"role": "user", "content": prompt_user[:1200]},
+                        ],
+                        temperature=0.1,
+                        max_tokens=min(180, max_tokens),
+                        frequency_penalty=0.6,
+                        repeat_penalty=1.25,
+                        timeout_sec=remain,
+                    ),
+                    timeout=remain + 1.0,
+                )
+            except Exception:  # noqa: BLE001
+                retry = {"ok": False}
+            if retry.get("ok") and (retry.get("text") or "").strip():
+                reply = _clean_reply(str(retry["text"]))
+
+        if _is_junk(reply):
+            if local_hits:
+                return self._synthesize_knowledge(topic or user_msg, local_hits, learn=False) or "\n".join(
+                    str(h)[:280] for h in local_hits[:4]
+                )
+            return (
+                f"Modelis iedeva neskaidru atbildi par «{topic}». "
+                "Mēģini īsāku jautājumu vai UPGRADE_MODEL.bat."
+            )
+
+        if intent in {Intent.SEARCH, Intent.PERSON} and local_hits:
+            reply = f"{reply}"
+
+        return reply
 
     @staticmethod
     def _looks_like_question(text: str) -> bool:
@@ -912,25 +1066,20 @@ class ChatService:
 
     @staticmethod
     def _should_web_search(text: str) -> bool:
-        """Faktu jautājumi → web. Jautājumi par mani / čau → NĒ."""
+        """Eksplicīti «kas ir X» / doki → web. Parastie jautājumi → llama (kā ChatGPT)."""
         if ChatService._is_about_assistant(text):
             return False
         f = fold_diacritics(text or "")
-        # Eksplicīti faktu šabloni
+        # Tikai skaidri meklēšanas/faktu šabloni — NE «kāpēc debesis zilas?» (to dara LLM)
         if re.search(
             r"(?i)\b("
             r"kas\s+ir|kas\s+bija|who\s+is|who\s+was|what\s+is|"
             r"kur\s+atrodas|kad\s+dzimis|biograf|"
-            r"informacij|dokumentac|wikipedia"
+            r"informacij|dokumentac|wikipedia|linkedin"
             r")\b",
             f,
         ):
             return True
-        # «?» VIENS pats ar «tu» jau noraidīts; citi īsi čau — nē
-        if len(f) < 12:
-            return False
-        # Garš jautājums bez «tu» — iespējams fakts, bet bez eksplicīta sameklē
-        # NEDARĀM auto-Google (tas bija bugs). Tikai skaidri faktu vārdi.
         return False
 
     @staticmethod

@@ -224,6 +224,36 @@ def test_should_web_search_only_for_facts():
     assert ChatService._should_web_search("kas ir Python?")
     assert not ChatService._should_web_search("kāpēc tu atbildi angliski?")
     assert not ChatService._should_web_search("sveiki kā iet")
+    # Parastie «kāpēc…» → llama (ChatGPT), ne auto-Google
+    assert not ChatService._should_web_search("Kāpēc debesis ir zilas?")
+
+
+def test_chat_uses_llama_not_bounce_menu():
+    """Kāpēc nestrādā kā ChatGPT: _llm_task bija stub → «pasaki konkrēti»."""
+    import asyncio
+
+    from mainbrain.contracts.schemas import ChatRequest
+
+    class FakeModels:
+        async def complete_messages(self, **kwargs):
+            return {
+                "ok": True,
+                "text": (
+                    "Debesis izskatās zilas, jo Saules gaisma izkliedējas atmosfērā "
+                    "(Rayleigh izkliede) — zilā gaisma izkliedējas vairāk."
+                ),
+                "provider": "llama.cpp",
+            }
+
+    svc = ChatService(models=FakeModels(), brain=None)  # type: ignore[arg-type]
+
+    async def run():
+        r = await svc.chat(ChatRequest(message="Kāpēc debesis ir zilas?", session_id="sky"))
+        low = r.reply.lower()
+        assert "pasaki konkrēti" not in low
+        assert "rayleigh" in low or "zil" in low or "atmosfēr" in low
+
+    asyncio.run(run())
 
 
 def test_meta_ollama_and_learning_without_llm():
