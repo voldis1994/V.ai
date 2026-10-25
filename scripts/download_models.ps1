@@ -4,8 +4,8 @@
   Lejupielādē GGUF modeļus Main Brain OS lomām ar skaidru lietotāja apstiprinājumu.
 #>
 param(
-    [ValidateSet("light", "standard")]
-    [string]$Profile = "light",
+    [ValidateSet("light", "standard", "capable")]
+    [string]$Profile = "standard",
     [switch]$AcceptDownloads,
     [switch]$Force,
     [string]$ModelsDir = ""

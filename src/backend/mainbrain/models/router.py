@@ -38,17 +38,19 @@ class ModelRouter:
                         "size_mb": round(path.stat().st_size / (1024 * 1024), 1),
                     }
                 )
-        # lomu noklusējumi pēc failu nosaukumiem
-        for item in found:
+        # Lomu noklusējumi — preferē LIELĀKO GGUF lomā (7B > 3B > 1.5B)
+        found_sorted = sorted(found, key=lambda x: x.get("size_mb") or 0, reverse=True)
+        for item in found_sorted:
             name = item["name"].lower()
+            mapped = {"provider": "llama.cpp", **item}
             if "embed" in name:
-                self._role_models[ModelRole.EMBEDDING] = {"provider": "llama.cpp", **item}
-            elif "vision" in name or "vl" in name:
-                self._role_models[ModelRole.VISION] = {"provider": "llama.cpp", **item}
+                self._role_models.setdefault(ModelRole.EMBEDDING, mapped)
+            elif "vision" in name or "vl" in name or "moondream" in name:
+                self._role_models.setdefault(ModelRole.VISION, mapped)
             elif "code" in name or "coder" in name:
-                self._role_models[ModelRole.CODING] = {"provider": "llama.cpp", **item}
+                self._role_models.setdefault(ModelRole.CODING, mapped)
             else:
-                self._role_models.setdefault(ModelRole.REASONING, {"provider": "llama.cpp", **item})
+                self._role_models.setdefault(ModelRole.REASONING, mapped)
         return found
 
     async def health(self, *, force: bool = False) -> list[ModelHealth]:

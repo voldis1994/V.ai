@@ -1,14 +1,18 @@
 {
-  "version": 1,
-  "notes_lv": "Atvērto svaru GGUF katalogs Main Brain OS lomām. Licences: skatīt katra modeļa Hugging Face lapu (parasti Apache-2.0 / Qwen licence). Lejupielāde tikai ar lietotāja apstiprinājumu.",
+  "version": 2,
+  "notes_lv": "Atvērto svaru GGUF katalogs Main Brain OS lomām. 1.5B (light) der tikai smoke testiem — reālai uzdevumu saprašanai vajag standard (3B) vai capable (7B). Licences: skatīt Hugging Face lapu. Lejupielāde tikai ar lietotāja apstiprinājumu.",
   "profiles": {
     "light": {
-      "description_lv": "Mazāka aparatūra (~2–4 GB diska, mazāka RAM)",
+      "description_lv": "Smoke / vāja aparatūra (~2 GB). Nespēj labi saprast uzdevumus — tikai pārbaudei.",
       "models": ["reasoning_light", "coding_light", "embedding"]
     },
     "standard": {
-      "description_lv": "Standarta komplekts (~6–10 GB)",
-      "models": ["reasoning_light", "coding_light", "embedding", "vision_light"]
+      "description_lv": "Ieteicamais minimums sapratnei (~4 GB). Qwen 3B.",
+      "models": ["reasoning_standard", "coding_standard", "embedding"]
+    },
+    "capable": {
+      "description_lv": "Reāla kvalitāte izskaidrošanai un kodam (~9–10 GB). Qwen 7B. RAM ieteicams 16 GB+.",
+      "models": ["reasoning_capable", "coding_capable", "embedding"]
     }
   },
   "models": {
@@ -27,6 +31,38 @@
       "license": "Apache-2.0 / Qwen",
       "source_page": "https://huggingface.co/bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF",
       "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
+    },
+    "reasoning_standard": {
+      "role": "reasoning",
+      "filename": "Qwen2.5-3B-Instruct-Q4_K_M.gguf",
+      "approx_mb": 1920,
+      "license": "Apache-2.0 / Qwen",
+      "source_page": "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF",
+      "url": "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
+    },
+    "coding_standard": {
+      "role": "coding",
+      "filename": "Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf",
+      "approx_mb": 1920,
+      "license": "Apache-2.0 / Qwen",
+      "source_page": "https://huggingface.co/bartowski/Qwen2.5-Coder-3B-Instruct-GGUF",
+      "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf"
+    },
+    "reasoning_capable": {
+      "role": "reasoning",
+      "filename": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+      "approx_mb": 4680,
+      "license": "Apache-2.0 / Qwen",
+      "source_page": "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF",
+      "url": "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+    },
+    "coding_capable": {
+      "role": "coding",
+      "filename": "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+      "approx_mb": 4680,
+      "license": "Apache-2.0 / Qwen",
+      "source_page": "https://huggingface.co/bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
+      "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
     },
     "embedding": {
       "role": "embedding",

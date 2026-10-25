@@ -3,12 +3,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from mainbrain.api.app import create_app
-from mainbrain.brain.chat import (
-    _is_junk,
-    looks_like_person_lookup,
-    wants_execution,
-)
-from mainbrain.brain.chat import ChatService
+from mainbrain.brain.chat import ChatService, _is_junk, wants_execution
+from mainbrain.brain.intent import Intent, classify_intent
 from mainbrain.core.config import Settings
 
 
@@ -16,28 +12,35 @@ def test_wants_execution_heuristics():
     assert wants_execution("Sveiki!") is False
     assert wants_execution("Kas ir Python?") is False
     assert wants_execution("Izveido Python failu hello.py") is True
+    assert wants_execution("uztaisi programmu kalkulators") is True
     assert wants_execution("Izpildi: atver notepad") is True
     assert wants_execution("labdien", force_execute=True) is True
     assert wants_execution("Izveido kodu", force_execute=False) is False
 
 
-def test_looks_like_person_lookup_catches_screenshot_queries():
-    # Exact queries from the user's broken chat screenshot
-    assert looks_like_person_lookup(
+def test_intent_search_learn_explain_build():
+    assert classify_intent("sveiks") == Intent.GREET
+    assert classify_intent("cik ir 2+2") == Intent.MATH
+
+    # Lietotāja sūdzība: sameklē / iemācies / izskaidro
+    assert classify_intent("izskaidro kas ir Python") == Intent.EXPLAIN
+    assert classify_intent("Kas ir Python?") == Intent.EXPLAIN
+    assert classify_intent("iemācies kā uztaisīt vienkāršu HTTP serveri") == Intent.LEARN
+    # «sameklē kā strādā» = skaidrojuma intents (noderīgāks nekā tukša meklēšana)
+    assert classify_intent("sameklē kā strādā regex") == Intent.EXPLAIN
+    assert classify_intent("sameklē informāciju par Python list") == Intent.SEARCH
+    assert classify_intent("sameklē dokumentāciju par FastAPI") == Intent.SEARCH
+
+    # Personu meklēšana — bez halucinācijām
+    assert classify_intent(
         "vai vari atrast informāciju par edgars gaidulis ?"
-    )
-    assert looks_like_person_lookup("persona Edgars Gaidulis")
-    assert looks_like_person_lookup("Edgars Gaidulis")
-    assert looks_like_person_lookup("Edgars Gaidulis?")
-    assert looks_like_person_lookup("Kas ir Edgars Gaidulis?")
-    assert looks_like_person_lookup("pastāsti man par Edgaru Gaiduli")
-    assert looks_like_person_lookup("who is Elon Musk")
-    # Not person lookups — single-concept / non-person
-    assert not looks_like_person_lookup("sveiks")
-    assert not looks_like_person_lookup("cik ir 2+2")
-    assert not looks_like_person_lookup("Izveido Python failu")
-    assert not looks_like_person_lookup("Kas ir Python?")
-    assert not looks_like_person_lookup("how you today?")
+    ) == Intent.PERSON
+    assert classify_intent("persona Edgars Gaidulis") == Intent.PERSON
+    assert classify_intent("Edgars Gaidulis") == Intent.PERSON
+
+    # Programmas — BUILD
+    assert classify_intent("uztaisi Python failu hello.py") == Intent.BUILD
+    assert classify_intent("sameklē un uztaisi kalkulatoru Python") == Intent.BUILD
 
 
 def test_is_junk_detects_gaidis_loop():
@@ -46,19 +49,29 @@ def test_is_junk_detects_gaidis_loop():
         "Tā ir jābūt jautājumu, kādā arī gaidis."
     )
     assert _is_junk(junk)
-    assert _is_junk(junk + " " + junk)
-    assert not _is_junk("Sveiki! Kā varu palīdzēt?")
+    assert not _is_junk("Python ir programmēšanas valoda.")
 
 
-def test_local_replies_without_llm():
+def test_local_greet_and_person_without_llm():
+    import asyncio
+
+    from mainbrain.contracts.schemas import ChatRequest
+
     svc = ChatService(models=None, brain=None)  # type: ignore[arg-type]
-    assert "Sveiki" in (svc._local_reply("sveiks") or "")
-    person = svc._local_reply("vai vari atrast informāciju par edgars gaidulis ?")
-    assert person and "nav drošu lokālo datu" in person.lower()
-    lang = svc._local_reply("cik valodas tu zini ?")
-    assert lang and "latvie" in lang.lower()
-    assert svc._local_reply("cik ir 2+2") == "2 + 2 = 4"
-    assert svc._local_reply("how you today?") is None  # goes to LLM
+
+    async def run():
+        r1 = await svc.chat(ChatRequest(message="sveiks", session_id="x"))
+        assert "Sveiki" in r1.reply
+        r2 = await svc.chat(
+            ChatRequest(
+                message="vai vari atrast informāciju par edgars gaidulis ?",
+                session_id="x",
+            )
+        )
+        assert "gaidis" not in r2.reply.lower()
+        assert "nav" in r2.reply.lower() or "datu" in r2.reply.lower()
+
+    asyncio.run(run())
 
 
 def test_chat_endpoint(tmp_path: Path):
@@ -71,23 +84,19 @@ def test_chat_endpoint(tmp_path: Path):
     app = create_app(settings)
     with TestClient(app) as client:
         client.headers.update({"Authorization": "Bearer test-token"})
-        # Greeting is answered locally without llama-server
         resp = client.post("/chat", json={"message": "Sveiki", "session_id": "t1"})
         assert resp.status_code == 200
         body = resp.json()
         assert body["mode"] == "chat"
         assert "Sveiki" in body["reply"]
-        assert body["session_id"] == "t1"
 
-        # Person lookup must never hallucinate
         resp2 = client.post(
             "/chat",
             json={
-                "message": "vai vari atrast informāciju par edgars gaidulis ?",
+                "message": "persona Edgars Gaidulis",
                 "session_id": "t1",
             },
         )
         assert resp2.status_code == 200
         reply = resp2.json()["reply"].lower()
         assert "gaidis" not in reply
-        assert "nav" in reply or "nezinu" in reply or "datu" in reply

@@ -13,8 +13,8 @@ param(
     [switch]$IncludeDevTools,
     [switch]$AcceptDownloads,
     [switch]$DownloadModels,
-    [ValidateSet("light", "standard")]
-    [string]$ModelProfile = "light",
+    [ValidateSet("light", "standard", "capable")]
+    [string]$ModelProfile = "standard",
     [switch]$SkipLlamaServer
 )
 

@@ -4,8 +4,8 @@
 param(
     [switch]$SkipModels,
     [switch]$SkipLaunch,
-    [ValidateSet("light", "standard")]
-    [string]$ModelProfile = "light"
+    [ValidateSet("light", "standard", "capable")]
+    [string]$ModelProfile = "standard"
 )
 
 $ErrorActionPreference = "Stop"

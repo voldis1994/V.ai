@@ -3,8 +3,8 @@
 param(
     [switch]$SkipModels,
     [switch]$SkipLaunch,
-    [ValidateSet("light", "standard")]
-    [string]$ModelProfile = "light"
+    [ValidateSet("light", "standard", "capable")]
+    [string]$ModelProfile = "standard"
 )
 $here = $PSScriptRoot
 $setup = Join-Path $here "setup_full.ps1"

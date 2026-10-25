@@ -106,16 +106,19 @@ class AiPlanner:
         completion = await self.models.complete(
             role=ModelRole.REASONING,
             system=(
-                "Tu esi Main Brain plānotājs. Atbildi TIKAI ar JSON objektu latviešu valodā. "
+                "Tu esi Main Brain uzdevumu plānotājs. Vispirms SAPROTI mērķi, tad plāno. "
+                "Atbildi TIKAI ar JSON objektu latviešu valodā. "
                 "Shēma: {\"summary\": str, \"tasks\":[{\"id\":str,\"title\":str,\"description\":str,"
                 "\"agent_id\":str,\"depends_on\":[str]}], \"assumptions\":[str], \"risks\":[str]}. "
                 f"Atļautie agent_id: {sorted(ALLOWED_AGENTS)}. "
-                "Nedrīkst iekļaut čaulas komandas vai rīku izsaukumus — tikai uzdevumu grafu."
+                "Katram task.description jābūt konkrētam (ko darīt). "
+                "Nedrīkst iekļaut čaulas komandas — tikai uzdevumu grafu. "
+                "Ja mērķis neskaidrs — assumptions ieraksti ko pieņēmi."
             ),
             prompt=(
                 f"Mērķis: {goal_text}\n"
                 f"Atmiņas norādes: {memory_hints or []}\n"
-                "Izveido minimālu, izpildāmu DAG."
+                "1) Īsi interpretē ko lietotājs grib. 2) Izveido minimālu izpildāmu DAG."
             ),
             temperature=0.1,
             max_tokens=1200,

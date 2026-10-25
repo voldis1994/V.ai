@@ -3,41 +3,33 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from mainbrain.brain.intent import Intent, classify_intent, extract_topic, wants_execution
 from mainbrain.contracts.schemas import ChatMessage, ChatRequest, ChatResponse, ModelRole, RunGoalRequest
+from mainbrain.core.ids import utc_now
 from mainbrain.models.router import ModelRouter
 
 
-SYSTEM_PROMPT = """Tu esi Main Brain — lokāls Windows AI asistents.
+SYSTEM_CHAT = """Tu esi Main Brain — lokāls Windows AI asistents.
 Noteikumi:
-1) Atbildi latviešu valodā, 1–3 īsos teikumos.
+1) Atbildi latviešu valodā, skaidri un pēc būtības.
 2) Atbildi TIKAI uz jautājumu. Nekad neatkārto tekstu.
-3) Ja nezini faktu (cilvēki, jaunumi, privāta info) — saki: «Man nav šādu lokālo datu.»
-4) Neizdomā biogrāfijas un nestāsti muļķības.
-5) Matemātiku rēķini precīzi.
-6) Ja lūdz izveidot/palaist/labot datorā — īsi apstiprini izpildi."""
+3) Ja nezini faktu (cilvēki, jaunumi) — saki godīgi. Neizdomā.
+4) Matemātiku rēķini precīzi.
+5) Ja lūdz izveidot/palaist/labot datorā — īsi apstiprini izpildi."""
 
-_ACTION_RE = re.compile(
-    r"(?i)\b("
-    r"izveido|izveidot|uzraksti|uzrakstīt|izlabo|labot|palaid|palaist|"
-    r"instalē|instalēt|kompilē|build|deploy|dzēs|izdzēs|"
-    r"pārbaudi\s+test|uzraksti\s+kod|izveido\s+fail|"
-    r"open\s+notepad|atver\s+notepad|atver\s+pārlūk"
-    r")\b"
-)
+SYSTEM_EXPLAIN = """Tu esi Main Brain skolotājs.
+Izskaidro tēmu latviešu valodā strukturēti:
+1) Kas tas ir (1–2 teikumi)
+2) Kā tas strādā (2–4 punkti)
+3) Neliels piemērs (kods vai soļi), ja der
+Bez atkārtojumiem. Ja tēma nav droši zināma — saki to skaidri."""
 
-# Personu / privātu faktu meklēšana — 1.5B GGUF izdomā muļķības
-_PERSON_RE = re.compile(
-    r"(?i)("
-    # "kas ir Vārds Uzvārds" — divi vārdi, lai neķertu «Kas ir Python?»
-    r"\b(kas\s+(ir|bija)|who\s+is|who\s+was)\s+"
-    r"[\wāčēģīķļņšūž]+\s+[\wāčēģīķļņšūž]+|"
-    r"\b(pastāsti|stāsti|pastāstiet)\s+(man\s+)?par\b|"
-    r"\b(atrast|atrod|meklē|meklēt|find|search)\b.{0,40}\b(par|about)\b|"
-    r"\binformācij[ua]\s+par\b|"
-    r"\b(ko\s+tu\s+zini\s+par|what\s+do\s+you\s+know\s+about)\b|"
-    r"\b(persona|person|cilvēks|biogrāfij)\b"
-    r")"
-)
+SYSTEM_SEARCH = """Tu esi Main Brain lokālais asistents BEZ interneta.
+Lietotājs lūdz «sameklēt». Tu:
+1) Godīgi saki, ka nav tīmekļa meklētāja
+2) Sniedz labāko lokālo izskaidrojumu / plānu no zināšanām
+3) Ja der — piedāvā nākamo soli: «uztaisi…» lai palaistu aģentus
+Bez biogrāfiju izdomāšanas. Bez atkārtojumiem."""
 
 _BAD_REPLY = re.compile(
     r"(?i)("
@@ -48,26 +40,6 @@ _BAD_REPLY = re.compile(
     r"tu\s+zini\s+latvijas\s+valod"
     r")"
 )
-
-_LATVIAN_NAME_TOKEN = re.compile(
-    r"^[A-ZĀČĒĢĪĶĻŅŠŪŽ][a-zāčēģīķļņšūž]+(?:s|a|is|us|as|e|o)?$",
-    re.UNICODE,
-)
-
-
-def wants_execution(text: str, force_execute: bool | None = None) -> bool:
-    if force_execute is True:
-        return True
-    if force_execute is False:
-        return False
-    t = (text or "").strip()
-    if t.lower().startswith(("izpildi:", "izpildīt:", "dari:", "run:", "/run")):
-        return True
-    if len(t) < 8:
-        return False
-    if t.endswith("?") and not _ACTION_RE.search(t):
-        return False
-    return bool(_ACTION_RE.search(t))
 
 
 def _dedupe_sentences(text: str) -> str:
@@ -95,8 +67,8 @@ def _clean_reply(text: str) -> str:
         uniq.append(p)
     t = "\n".join(uniq)
     t = _dedupe_sentences(t)
-    if len(t) > 400:
-        t = t[:400].rsplit(" ", 1)[0] + "…"
+    if len(t) > 1200:
+        t = t[:1200].rsplit(" ", 1)[0] + "…"
     return t.strip()
 
 
@@ -115,32 +87,14 @@ def _is_junk(text: str) -> bool:
             head = text[:n]
             if text.count(head) >= 2:
                 return True
-    # Same sentence pasted twice (common with tiny GGUF)
     sentences = [s.strip() for s in re.split(r"[.!?]+", text) if s.strip()]
     if len(sentences) >= 2 and len(set(s.lower() for s in sentences)) == 1:
         return True
     return False
 
 
-def looks_like_person_lookup(message: str) -> bool:
-    """True → neļaujam 1.5B izdomāt biogrāfiju."""
-    raw = (message or "").strip()
-    if not raw:
-        return False
-    if _PERSON_RE.search(raw):
-        return True
-
-    # Tikai īsa ziņa: «Edgars Gaidulis» / «Edgars Gaidulis?»
-    cleaned = re.sub(r"[?!.,;:]+$", "", raw).strip()
-    words = [w for w in cleaned.split() if w.isalpha()]
-    if 2 <= len(words) <= 3 and all(_LATVIAN_NAME_TOKEN.match(w) for w in words):
-        return True
-
-    return False
-
-
 class ChatService:
-    """Conversational front-door to Main Brain + optional goal execution."""
+    """Conversational front-door: intent → explain/search/learn/build/chat."""
 
     def __init__(self, models: ModelRouter, brain: Any) -> None:
         self.models = models
@@ -155,89 +109,231 @@ class ChatService:
         history = self._history(session)
         user_msg = req.message.strip()
         history.append({"role": "user", "content": user_msg})
-        # Mazam modelim īsa vēsture — citādi sabrūk / atkārto junk
-        if len(history) > 8:
-            del history[:-8]
+        if len(history) > 10:
+            del history[:-10]
 
-        execute = wants_execution(user_msg, req.force_execute)
-        if execute:
+        intent = classify_intent(user_msg, force_execute=req.force_execute)
+
+        if intent == Intent.BUILD:
             return await self._execute(req, session, history)
 
-        # Vietējās drošās atbildes (bez LLM) — sveiciens, valodas, matemātika, personas
-        local = self._local_reply(user_msg)
-        if local:
-            history.append({"role": "assistant", "content": local})
-            return ChatResponse(
-                reply=local,
-                mode="chat",
-                session_id=session,
-                messages=[ChatMessage(**m) for m in history[-8:]],
+        if intent == Intent.GREET:
+            return self._finish(session, history, "Sveiki! Kā varu palīdzēt?")
+
+        if intent == Intent.MATH:
+            math_reply = self._try_math(user_msg)
+            if math_reply:
+                return self._finish(session, history, math_reply)
+
+        if intent == Intent.PERSON:
+            return self._finish(
+                session,
+                history,
+                "Man nav drošu lokālo datu par šo personu (bez interneta biogrāfijas neizdomāju). "
+                "Ja vajag tehnisku skaidrojumu vai programmu — raksti «izskaidro …» vai «uztaisi …».",
             )
 
-        messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
-        messages.extend(history[-4:])
+        # Valodu īsie FAQ
+        if re.search(r"(?i)(valod|language|scottish|scotland|skotij)", user_msg):
+            if re.search(r"(?i)(scottish|scotland|skot)", user_msg):
+                reply = (
+                    "Skotijā oficiāli lieto angļu; papildus — skotu (Scots) un skotu gēlu. "
+                    "Es atbildu latviski un angliski."
+                )
+            else:
+                reply = (
+                    "Es saprotu un atbildu latviešu un angļu valodā. "
+                    "Citas valodas — vāji (lokālais modelis)."
+                )
+            return self._finish(session, history, reply)
 
-        result = await self.models.complete_messages(
-            role=ModelRole.REASONING,
-            messages=messages,
-            temperature=0.2,
-            max_tokens=160,
-            frequency_penalty=0.6,
-            presence_penalty=0.4,
-            repeat_penalty=1.25,
-            stop=["\nTu:", "\nUser:", "\nuser:", "\nMain Brain:", "\n\n\n"],
+        topic = extract_topic(user_msg)
+
+        if intent in {Intent.SEARCH, Intent.LEARN, Intent.EXPLAIN}:
+            local_hits = self._search_local_knowledge(topic)
+            reply = await self._llm_task(
+                intent=intent,
+                user_msg=user_msg,
+                topic=topic,
+                history=history,
+                local_hits=local_hits,
+            )
+            if intent == Intent.LEARN and reply and not _is_junk(reply):
+                self._remember(topic, reply)
+            return self._finish(session, history, reply)
+
+        # Vispārīgs chat
+        reply = await self._llm_task(
+            intent=Intent.CHAT,
+            user_msg=user_msg,
+            topic=topic,
+            history=history,
+            local_hits=[],
         )
+        return self._finish(session, history, reply)
 
-        reply = ""
-        model_error = None
-        if result.get("ok") and (result.get("text") or "").strip():
-            reply = _clean_reply(str(result["text"]))
-        else:
-            model_error = str(result.get("error") or "Lokālais modelis nav pieejams.")
-
-        if model_error and not reply:
-            reply = (
-                f"Modelis neatbild ({model_error}). "
-                "Pārbaudiet llama-server (FIX_BACKEND.bat / START_MAINBRAIN.bat)."
-            )
-        elif _is_junk(reply):
-            retry = await self.models.complete_messages(
-                role=ModelRole.REASONING,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Atbildi latviešu valodā VIENĀ teikumā. "
-                            "Ja nezini — «Nezinu.» Bez atkārtojumiem."
-                        ),
-                    },
-                    {"role": "user", "content": user_msg},
-                ],
-                temperature=0.05,
-                max_tokens=80,
-                frequency_penalty=0.8,
-                repeat_penalty=1.35,
-                stop=["\n"],
-            )
-            if retry.get("ok") and (retry.get("text") or "").strip():
-                reply = _clean_reply(str(retry["text"]))
-            if _is_junk(reply):
-                reply = self._offline_fact_reply(user_msg)
-
-        # Izgriez junk no vēstures, lai nākamais turns nesabojātos
-        cleaned_hist: list[dict[str, str]] = []
+    def _finish(self, session: str, history: list[dict[str, str]], reply: str) -> ChatResponse:
+        cleaned: list[dict[str, str]] = []
         for m in history:
             if m["role"] == "assistant" and _is_junk(m["content"]):
                 continue
-            cleaned_hist.append(m)
-        history[:] = cleaned_hist[-8:]
+            cleaned.append(m)
+        history[:] = cleaned[-10:]
         history.append({"role": "assistant", "content": reply})
-
         return ChatResponse(
             reply=reply,
             mode="chat",
             session_id=session,
-            messages=[ChatMessage(**m) for m in history[-8:]],
+            messages=[ChatMessage(**m) for m in history[-10:]],
+        )
+
+    async def _llm_task(
+        self,
+        *,
+        intent: Intent,
+        user_msg: str,
+        topic: str,
+        history: list[dict[str, str]],
+        local_hits: list[str],
+    ) -> str:
+        if intent == Intent.EXPLAIN or intent == Intent.LEARN:
+            system = SYSTEM_EXPLAIN
+            max_tokens = 480
+            role = ModelRole.CODING if self._looks_technical(topic) else ModelRole.REASONING
+        elif intent == Intent.SEARCH:
+            system = SYSTEM_SEARCH
+            max_tokens = 360
+            role = ModelRole.REASONING
+        else:
+            system = SYSTEM_CHAT
+            max_tokens = 220
+            role = ModelRole.REASONING
+
+        context_bits = ""
+        if local_hits:
+            joined = "\n- ".join(local_hits[:3])
+            context_bits = f"\n\nLokālās zināšanas:\n- {joined}"
+
+        if intent == Intent.SEARCH:
+            prompt_user = (
+                f"Lietotājs lūdz sameklēt: {user_msg}\n"
+                f"Tēma: {topic}.{context_bits}\n"
+                "Atbildi noderīgi, bez interneta pretīšanām."
+            )
+        elif intent in {Intent.EXPLAIN, Intent.LEARN}:
+            prompt_user = (
+                f"Izskaidro: {topic}\n"
+                f"Oriģināls jautājums: {user_msg}.{context_bits}"
+            )
+        else:
+            prompt_user = user_msg
+
+        messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+        # Īsa vēsture + aktuālais prompt
+        for m in history[-4:]:
+            if m["content"] == user_msg and m["role"] == "user":
+                continue
+            messages.append(m)
+        messages.append({"role": "user", "content": prompt_user})
+
+        result = await self.models.complete_messages(
+            role=role,
+            messages=messages,
+            temperature=0.25 if intent != Intent.CHAT else 0.2,
+            max_tokens=max_tokens,
+            frequency_penalty=0.55,
+            presence_penalty=0.35,
+            repeat_penalty=1.22,
+            stop=["\nTu:", "\nUser:", "\nuser:", "\nMain Brain:"],
+        )
+
+        reply = ""
+        if result.get("ok") and (result.get("text") or "").strip():
+            reply = _clean_reply(str(result["text"]))
+        else:
+            err = str(result.get("error") or "Lokālais modelis nav pieejams")
+            return (
+                f"Modelis neatbild ({err}). "
+                "Ja atbildes ir vājas — lejupielādē capable profilu (7B): UPGRADE_MODEL.bat"
+            )
+
+        if _is_junk(reply):
+            retry = await self.models.complete_messages(
+                role=role,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Atbildi latviešu valodā skaidri, bez atkārtojumiem. Ja nezini — «Nezinu.»",
+                    },
+                    {"role": "user", "content": prompt_user},
+                ],
+                temperature=0.05,
+                max_tokens=min(200, max_tokens),
+                frequency_penalty=0.8,
+                repeat_penalty=1.35,
+            )
+            if retry.get("ok") and (retry.get("text") or "").strip():
+                reply = _clean_reply(str(retry["text"]))
+            if _is_junk(reply):
+                if intent == Intent.SEARCH:
+                    return (
+                        f"Lokāli neatrada drošu info par «{topic}» (nav interneta). "
+                        "Mēģini «izskaidro …» vai «uztaisi …». "
+                        "Labākai saprašanai: UPGRADE_MODEL.bat (Qwen 7B)."
+                    )
+                return (
+                    f"Nezinu drošu atbildi par «{topic}» (modelis pārāk vājš vai nav datu). "
+                    "Pārslēdzies uz capable 7B: UPGRADE_MODEL.bat — tad uzdevumus sapratīs labāk."
+                )
+
+        if intent == Intent.SEARCH and local_hits:
+            reply = f"[Lokālā atmiņa: {len(local_hits)} trāpījumi]\n{reply}"
+        elif intent == Intent.SEARCH:
+            reply = f"(Bez interneta — tikai lokālās zināšanas)\n{reply}"
+
+        if intent == Intent.LEARN:
+            reply = f"{reply}\n\n[Iemācīts] Saglabāju īsu kopsavilkumu lokālajā zināšanu bāzē."
+
+        return reply
+
+    def _search_local_knowledge(self, topic: str) -> list[str]:
+        store = getattr(self.brain, "store", None)
+        if store is None or not topic.strip():
+            return []
+        try:
+            rows = store.search_knowledge(topic, limit=5)
+        except Exception:  # noqa: BLE001 — FTS var mest uz dīvainiem vaicājumiem
+            return []
+        out: list[str] = []
+        for row in rows or []:
+            content = str(row.get("content") or "").strip()
+            if content:
+                out.append(content[:400])
+        return out
+
+    def _remember(self, topic: str, reply: str) -> None:
+        store = getattr(self.brain, "store", None)
+        if store is None:
+            return
+        summary = reply.split("\n\n[Iemācīts]")[0].strip()[:800]
+        try:
+            store.index_knowledge(
+                f"{topic}\n{summary}",
+                source=f"learn:{topic[:80]}",
+                verified=False,
+                metadata={"kind": "learn", "topic": topic, "at": utc_now().isoformat()},
+            )
+        except Exception:  # noqa: BLE001
+            return
+
+    @staticmethod
+    def _looks_technical(topic: str) -> bool:
+        return bool(
+            re.search(
+                r"(?i)(python|kod|programm|api|http|json|sql|windows|fail|script|"
+                r"javascript|typescript|react|docker|git|regex|funkcij|klase|algoritm)",
+                topic,
+            )
         )
 
     async def _execute(
@@ -246,7 +342,7 @@ class ChatService:
         session: str,
         history: list[dict[str, str]],
     ) -> ChatResponse:
-        ack_text = "Sapratu — sāku izpildi ar aģentiem."
+        ack_text = "Sapratu uzdevumu — sāku izpildi ar aģentiem."
         goal = req.message.strip()
         for prefix in ("izpildi:", "izpildīt:", "dari:", "run:", "/run"):
             if goal.lower().startswith(prefix):
@@ -270,40 +366,8 @@ class ChatService:
             mode="execute",
             session_id=session,
             goal_status=status,
-            messages=[ChatMessage(**m) for m in history[-8:]],
+            messages=[ChatMessage(**m) for m in history[-10:]],
         )
-
-    def _local_reply(self, message: str) -> str | None:
-        m = message.lower().strip()
-        m_clean = re.sub(r"[?!.,;:]+$", "", m).strip()
-
-        if m_clean in {"sveiks", "sveiki", "labdien", "labvakar", "hello", "hi", "hey"}:
-            return "Sveiki! Kā varu palīdzēt?"
-
-        if looks_like_person_lookup(message):
-            return (
-                "Man nav drošu lokālo datu par šo personu. "
-                "Esmu lokāls asistents bez interneta — biogrāfijas neizdomāju. "
-                "Varu palīdzēt ar kodu, Windows uzdevumiem vai vienkāršiem jautājumiem."
-            )
-
-        # Valodu jautājumi — 1.5B bieži sabojā
-        if re.search(r"(?i)(valod|language|scottish|scotland|skotij)", message):
-            if re.search(r"(?i)(scottish|scotland|skot)", message):
-                return (
-                    "Skotijā oficiāli lieto angļu; papildus — skotu (Scots) un skotu gēlu. "
-                    "Es pats atbildu latviski un angliski."
-                )
-            return (
-                "Es saprotu un atbildu latviešu un angļu valodā. "
-                "Citas valodas saprotu vāji — esmu mazs lokāls modelis."
-            )
-
-        math_reply = self._try_math(message)
-        if math_reply:
-            return math_reply
-
-        return None
 
     @staticmethod
     def _try_math(message: str) -> str | None:
@@ -328,13 +392,3 @@ class ChatService:
                 return "Dalīt ar nulli nevar."
             return f"{a} ÷ {b} = {a / b:.4g}"
         return None
-
-    @staticmethod
-    def _offline_fact_reply(message: str) -> str:
-        m = message.lower().strip()
-        if m in {"sveiks", "sveiki", "labdien", "hello", "hi"}:
-            return "Sveiki! Kā varu palīdzēt?"
-        return (
-            "Nezinu drošu atbildi uz to (lokālais modelis ir mazs). "
-            "Jautā par kodu, Windows uzdevumu vai vienkāršu aprēķinu — tur palīdzēšu labāk."
-        )
