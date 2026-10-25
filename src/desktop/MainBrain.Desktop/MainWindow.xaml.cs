@@ -130,12 +130,24 @@ public partial class MainWindow : Window
                     !string.IsNullOrWhiteSpace(vm.LiveImagePath) &&
                     File.Exists(vm.LiveImagePath))
                 {
-                    var bmp = new BitmapImage();
-                    bmp.BeginInit();
-                    bmp.CacheOption = BitmapCacheOption.OnLoad;
-                    bmp.UriSource = new Uri(vm.LiveImagePath);
-                    bmp.EndInit();
-                    LiveImage.Source = bmp;
+                    try
+                    {
+                        var bmp = new BitmapImage();
+                        bmp.BeginInit();
+                        bmp.CacheOption = BitmapCacheOption.OnLoad;
+                        bmp.UriSource = new Uri(vm.LiveImagePath);
+                        bmp.EndInit();
+                        if (LiveImage is not null)
+                        {
+                            LiveImage.Source = bmp;
+                        }
+
+                        if (ImmersiveLiveImage is not null)
+                        {
+                            ImmersiveLiveImage.Source = bmp;
+                        }
+                    }
+                    catch { /* ignore bad image */ }
                 }
 
                 if (args.PropertyName == nameof(MainViewModel.BrowserUrl) &&

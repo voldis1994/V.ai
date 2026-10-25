@@ -37,6 +37,9 @@ public partial class MainViewModel : ObservableObject
     public Visibility MatrixRainVisibility => Visibility.Visible;
     public Visibility ImmersiveVisibility => ImmersiveMode ? Visibility.Visible : Visibility.Collapsed;
     public Visibility ChromeVisibility => ImmersiveMode ? Visibility.Collapsed : Visibility.Visible;
+    /// <summary>Kameras/attēla priekšskatījums uz paša Matrix ekrāna (bez paneļu maiņas).</summary>
+    public Visibility ImmersiveLiveVisibility =>
+        ImmersiveMode && !string.IsNullOrWhiteSpace(LiveImagePath) ? Visibility.Visible : Visibility.Collapsed;
     [ObservableProperty] private string _terminalOutput = "";
     [ObservableProperty] private AgentDefinitionDto? _selectedAgent;
     [ObservableProperty] private string _inspectorText = "Izvēlieties aģentu vai palaidiet uzdevumu.";
@@ -161,19 +164,22 @@ public partial class MainViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(ImmersiveVisibility));
         OnPropertyChanged(nameof(ChromeVisibility));
+        OnPropertyChanged(nameof(ImmersiveLiveVisibility));
         if (value)
         {
             FocusSource = "home";
             ShowAgents = false;
             ShowInspector = false;
             IsFocusMode = true;
-            MatrixStatus = "◈ MAIN BRAIN · dzīva sistēma";
+            MatrixStatus = "";
         }
         else
         {
             MatrixStatus = "◈ DEV · Ctrl+Shift+D atpakaļ immersīvā";
         }
     }
+
+    partial void OnLiveImagePathChanged(string? value) => OnPropertyChanged(nameof(ImmersiveLiveVisibility));
 
     private void NotifyWorkspaceVisibilities()
     {
@@ -286,7 +292,8 @@ public partial class MainViewModel : ObservableObject
             ChatOutput += $"\n\nTu: {userText}";
         }
 
-        if (!FocusPinned)
+        // Immersīvā vienmēr paliekam uz Matrix; chrome režīmā — home, ja nav pin
+        if (ImmersiveMode || !FocusPinned)
         {
             FocusSource = "home";
         }
@@ -301,7 +308,7 @@ public partial class MainViewModel : ObservableObject
             });
             var reply = result.Reply ?? "";
             ChatOutput += $"\nMain Brain: {reply}";
-            // Hieroglifi salido un izveido atbildi ekrāna centrā
+            // Hieroglifi salido un izveido atbildi ekrāna centrā — VIENS ekrāns
             FormedAnswer = reply;
             MatrixStatus = ImmersiveMode ? "" : "◈ ATBILDE";
             if (result.Mode is "execute" or "act")
@@ -310,7 +317,7 @@ public partial class MainViewModel : ObservableObject
                 InspectorText = $"Darbība: {result.UiAction ?? result.GoalStatus}";
             }
 
-            // Fiziska UI: atver pārlūku / redaktoru / failu — lietotājs REDZ
+            // Fiziski: pārlūks/fails/kamera — Matrix paliek, chrome paneļi NETiek atvērti immersīvā
             ApplyUiAction(result);
             OnPropertyChanged(nameof(ApprovalsVisibility));
         }
@@ -346,12 +353,14 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
-            if (!string.IsNullOrWhiteSpace(result.Focus))
+            // Immersīvais = VIENS galvenais ekrāns. Fiziskās darbības (pārlūks/fails/kamera)
+            // notiek ārā vai Matrix atbildē — UI NEPĀRSLĒDZAS uz chrome paneļiem.
+            var stayOnMatrix = ImmersiveMode;
+
+            if (!stayOnMatrix && !string.IsNullOrWhiteSpace(result.Focus))
             {
-                // Īslaicīgi izejam no tīra Matrix, lai rādītu pārlūku/redaktoru/kameru
                 if (result.Focus is "browser" or "editor" or "terminal" or "live")
                 {
-                    ImmersiveMode = false;
                     IsFocusMode = true;
                     FocusSource = result.Focus;
                 }
@@ -377,7 +386,10 @@ public partial class MainViewModel : ObservableObject
             if (!string.IsNullOrWhiteSpace(result.ImagePath) && System.IO.File.Exists(result.ImagePath))
             {
                 LiveImagePath = result.ImagePath;
-                FocusSource = "live";
+                if (!stayOnMatrix)
+                {
+                    FocusSource = "live";
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(result.OpenPath) && System.IO.File.Exists(result.OpenPath))
@@ -386,13 +398,21 @@ public partial class MainViewModel : ObservableObject
                 if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".webp")
                 {
                     LiveImagePath = result.OpenPath;
-                    FocusSource = "live";
+                    if (!stayOnMatrix)
+                    {
+                        FocusSource = "live";
+                    }
                 }
                 else
                 {
                     EditorText = System.IO.File.ReadAllText(result.OpenPath);
+                    if (!stayOnMatrix)
+                    {
+                        FocusSource = "editor";
+                    }
                 }
 
+                // Immersīvā: atver failu/attēlu ārēji, Matrix paliek
                 try
                 {
                     Process.Start(new ProcessStartInfo
@@ -407,10 +427,17 @@ public partial class MainViewModel : ObservableObject
                 }
             }
 
-            // Audio atbilde — Windows SAPI (ja backend jau nerunāja)
             if (!string.IsNullOrWhiteSpace(result.SpeakText))
             {
                 SpeakLocal(result.SpeakText);
+            }
+
+            if (stayOnMatrix)
+            {
+                ImmersiveMode = true;
+                FocusSource = "home";
+                ShowAgents = false;
+                ShowInspector = false;
             }
         }
         catch

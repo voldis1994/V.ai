@@ -20,7 +20,7 @@
                            IsThinking="{Binding IsThinking}"
                            StatusLine="{Binding MatrixStatus}"/>
 
-    <!-- Immersīvais režīms: TIKAI jautājuma rinda (bez pogām) -->
+    <!-- Immersīvais režīms: VIENS ekrāns — Matrix + jautājums (bez paneļu pārslēgšanas) -->
     <DockPanel Panel.ZIndex="2" Visibility="{Binding ImmersiveVisibility}">
       <Border DockPanel.Dock="Bottom" Background="#AA010406" Padding="24,10,24,18">
         <StackPanel MaxWidth="920" HorizontalAlignment="Center">
@@ -37,12 +37,18 @@
                      CaretBrush="#FF00FF88" Padding="0,8"
                      KeyDown="ChatBox_OnKeyDown"/>
           </DockPanel>
-          <TextBlock Text="Enter · jautā   ·   Ctrl+Shift+D · sistēma   ·   F11 · logs"
+          <TextBlock Text="Enter · jautā   ·   Ctrl+Shift+D · sistēma   ·   Esc · Matrix   ·   F11 · logs"
                      FontFamily="Consolas" FontSize="11" Foreground="#4400FF88"
                      HorizontalAlignment="Center" Margin="0,6,0,0"/>
         </StackPanel>
       </Border>
-      <Grid/>
+      <!-- Kamera/attēls uz TĀ PAŠA Matrix ekrāna (nevis atsevišķs panelis) -->
+      <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,28,12"
+              Width="280" MaxHeight="200" CornerRadius="4"
+              BorderBrush="#6600FF88" BorderThickness="1" Background="#88010406"
+              Visibility="{Binding ImmersiveLiveVisibility}">
+        <Image x:Name="ImmersiveLiveImage" Stretch="Uniform" Opacity="0.92"/>
+      </Border>
     </DockPanel>
 
     <!-- Dev chrome: tikai Ctrl+Shift+D (nav redzams parasti) -->
