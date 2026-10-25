@@ -84,19 +84,24 @@ public sealed class MatrixRainCanvas : FrameworkElement
             return;
         }
 
-        _drops.Clear();
-        _floaters.Clear();
+        // Pārbūvē lokāli, tad atomiski aizvieto — bez Clear() Tick/OnRender laikā
         var cols = Math.Max(24, (int)(_size.Width / 14));
+        var drops = new List<Drop>(cols);
         for (var i = 0; i < cols; i++)
         {
-            _drops.Add(NewDrop(i * 14 + _rng.NextDouble() * 4, spawnTop: true));
+            drops.Add(NewDrop(i * 14 + _rng.NextDouble() * 4, spawnTop: true));
         }
 
+        var floaters = new List<Floater>(70);
         for (var i = 0; i < 70; i++)
         {
-            _floaters.Add(NewFloater());
+            floaters.Add(NewFloater());
         }
 
+        _drops.Clear();
+        _drops.AddRange(drops);
+        _floaters.Clear();
+        _floaters.AddRange(floaters);
         _initialized = true;
     }
 
@@ -135,38 +140,59 @@ public sealed class MatrixRainCanvas : FrameworkElement
         };
     }
 
+    private void ResetDrop(Drop d, double x)
+    {
+        var len = _rng.Next(8, 22);
+        if (d.Chars.Length != len)
+        {
+            d.Chars = new char[len];
+        }
+
+        for (var i = 0; i < d.Chars.Length; i++)
+        {
+            d.Chars[i] = Glyphs[_rng.Next(Glyphs.Length)];
+        }
+
+        d.X = x;
+        d.Y = -_rng.Next(0, Math.Max(40, (int)_size.Height / 2));
+        d.Speed = 4.5 + _rng.NextDouble() * 11.0;
+        d.Head = 0;
+    }
+
     private void Tick()
     {
-        if (!_initialized)
+        if (!_initialized || _drops.Count == 0)
         {
             return;
         }
 
-        foreach (var d in _drops)
+        // for-loop — NE foreach (citādi "Collection was modified")
+        for (var di = 0; di < _drops.Count; di++)
         {
+            var d = _drops[di];
             d.Y += d.Speed;
             d.Head++;
-            if (d.Head % 2 == 0)
+            if (d.Chars.Length > 0 && d.Head % 2 == 0)
             {
                 d.Chars[_rng.Next(d.Chars.Length)] = Glyphs[_rng.Next(Glyphs.Length)];
             }
 
             if (d.Y - d.Chars.Length * 16 > _size.Height)
             {
-                var idx = _drops.IndexOf(d);
-                _drops[idx] = NewDrop(d.X, spawnTop: true);
+                ResetDrop(d, d.X);
             }
         }
 
-        foreach (var f in _floaters)
+        for (var fi = 0; fi < _floaters.Count; fi++)
         {
+            var f = _floaters[fi];
             f.X += f.Vx;
             f.Y += f.Vy;
             f.Angle += f.Spin;
             if (f.X < -20 || f.X > _size.Width + 20 || f.Y < -20 || f.Y > _size.Height + 20)
             {
-                f.X = _rng.NextDouble() * _size.Width;
-                f.Y = _rng.NextDouble() * _size.Height;
+                f.X = _rng.NextDouble() * Math.Max(1, _size.Width);
+                f.Y = _rng.NextDouble() * Math.Max(1, _size.Height);
                 f.Char = Glyphs[_rng.Next(Glyphs.Length)];
             }
         }
@@ -175,15 +201,23 @@ public sealed class MatrixRainCanvas : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
         base.OnRender(dc);
-        if (_size.Width < 1 || _size.Height < 1)
+        if (_size.Width < 1 || _size.Height < 1 || !_initialized)
         {
             return;
         }
 
         dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(2, 6, 8)), null, new Rect(_size));
 
-        foreach (var d in _drops)
+        // snapshot counts — nerediģē list OnRender laikā
+        var dropCount = _drops.Count;
+        for (var di = 0; di < dropCount; di++)
         {
+            if (di >= _drops.Count)
+            {
+                break;
+            }
+
+            var d = _drops[di];
             for (var i = 0; i < d.Chars.Length; i++)
             {
                 var y = d.Y - i * 16;
@@ -192,7 +226,7 @@ public sealed class MatrixRainCanvas : FrameworkElement
                     continue;
                 }
 
-                var t = 1.0 - i / (double)d.Chars.Length;
+                var t = 1.0 - i / (double)Math.Max(1, d.Chars.Length);
                 var g = (byte)(40 + 200 * t);
                 var brush = i == 0
                     ? new SolidColorBrush(Color.FromArgb(240, 180, 255, 200))
@@ -209,8 +243,15 @@ public sealed class MatrixRainCanvas : FrameworkElement
             }
         }
 
-        foreach (var f in _floaters)
+        var floaterCount = _floaters.Count;
+        for (var fi = 0; fi < floaterCount; fi++)
         {
+            if (fi >= _floaters.Count)
+            {
+                break;
+            }
+
+            var f = _floaters[fi];
             var brush = new SolidColorBrush(Color.FromArgb((byte)(f.Alpha * 255), 0, 255, 140));
             dc.PushTransform(new RotateTransform(f.Angle * 180 / Math.PI, f.X, f.Y));
             var ft = new FormattedText(
