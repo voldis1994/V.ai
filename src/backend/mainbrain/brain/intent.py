@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from enum import Enum
 
 
@@ -14,6 +15,17 @@ class Intent(str, Enum):
     BUILD = "build"  # uztaisi / izveido / uzprogrammē
     OPEN = "open"  # atver programmu / failu / pārlūku
     CHAT = "chat"
+
+
+def normalize_user_text(text: str) -> str:
+    """Windows/IME bieži sūta NFD (a + ¯) — NFC, lai «iemācies» sakrīt ar regex."""
+    return unicodedata.normalize("NFC", text or "").strip()
+
+
+def fold_diacritics(text: str) -> str:
+    """latviešu → latviesu — lai komandas bez mīkstinājumiem arī strādā."""
+    nfd = unicodedata.normalize("NFD", text or "")
+    return "".join(c for c in nfd if unicodedata.category(c) != "Mn").lower()
 
 
 _GREET_RE = re.compile(
@@ -50,6 +62,10 @@ _EXPLAIN_RE = re.compile(
 _LEARN_RE = re.compile(
     r"(?i)\b(iemācies|iemācīties|iemācīt|iemāci|iemāciet|learn|teach\s+me|apgūt|apgūsti)\b"
 )
+# Bez diakritikas (Windows/tastatūra bez LV) + NFD fold
+_LEARN_FOLD_RE = re.compile(
+    r"(?i)\b(iemacies|iemacities|iemacit|iemaci|iemaciet|apgut|apgusti|learn|teach\s+me)\b"
+)
 
 _SEARCH_RE = re.compile(
     r"(?i)\b("
@@ -57,6 +73,9 @@ _SEARCH_RE = re.compile(
     r"find|search|google|look\s+up|"
     r"informācij[ua]\s+par"
     r")\b"
+)
+_SEARCH_FOLD_RE = re.compile(
+    r"(?i)\b(samekle|sameklet|mekle|meklet|atrast|atrod|find|search|google|look\s+up|informacij[ua]\s+par)\b"
 )
 
 _OPEN_RE = re.compile(
@@ -119,21 +138,23 @@ def looks_like_human_name(text: str) -> bool:
 
 
 def extract_topic(message: str) -> str:
+    message = normalize_user_text(message)
     m = _ABOUT_RE.search(message)
     if m:
         return m.group(1).strip(" ?.!,;:")
-    # «izskaidro X», «iemācies X», «sameklē X»
+    # «izskaidro X», «iemācies X», «sameklē X» (+ bez diakritikas)
     m2 = re.search(
         r"(?i)\b(?:izskaidro|izskaidrot|paskaidro|iemācies|iemācīties|iemāci|"
-        r"sameklē|meklē|atrast|explain|learn|find|search)\s+(.+)$",
-        message.strip(),
+        r"iemacies|iemacities|iemaci|"
+        r"sameklē|samekle|meklē|mekle|atrast|explain|learn|find|search)\s+(.+)$",
+        message,
     )
     if m2:
         return m2.group(1).strip(" ?.!,;:")
-    m3 = re.search(r"(?i)\bkas\s+ir\s+(.+?)[\s?]*$", message.strip())
+    m3 = re.search(r"(?i)\bkas\s+ir\s+(.+?)[\s?]*$", message)
     if m3:
         return m3.group(1).strip(" ?.!,;:")
-    return message.strip()
+    return message
 
 
 def classify_intent(text: str, *, force_execute: bool | None = None) -> Intent:
@@ -144,11 +165,12 @@ def classify_intent(text: str, *, force_execute: bool | None = None) -> Intent:
         # lietotājs aizliedza izpildi — tomēr var būt explain/search
         pass
 
-    t = (text or "").strip()
+    t = normalize_user_text(text)
     if not t:
         return Intent.CHAT
+    folded = fold_diacritics(t)
 
-    if t.lower().startswith(("izpildi:", "izpildīt:", "dari:", "run:", "/run")):
+    if t.lower().startswith(("izpildi:", "izpildīt:", "izpildit:", "dari:", "run:", "/run")):
         return Intent.BUILD
 
     if _GREET_RE.match(t):
@@ -160,9 +182,11 @@ def classify_intent(text: str, *, force_execute: bool | None = None) -> Intent:
     personish = bool(_PERSON_HINT_RE.search(t)) or looks_like_human_name(t) or looks_like_human_name(
         topic
     )
+    is_learn = bool(_LEARN_RE.search(t) or _LEARN_FOLD_RE.search(folded))
+    is_search = bool(_SEARCH_RE.search(t) or _SEARCH_FOLD_RE.search(folded))
 
     # «persona X» / «kas ir Vārds Uzvārds» / «info par Vārds Uzvārds»
-    if personish and (_PERSON_HINT_RE.search(t) or _SEARCH_RE.search(t) or _ABOUT_RE.search(t)):
+    if personish and (_PERSON_HINT_RE.search(t) or is_search or _ABOUT_RE.search(t)):
         return Intent.PERSON
     if personish and re.search(r"(?i)\b(kas\s+(ir|bija)|who\s+is|who\s+was)\b", t):
         parts = topic.split()
@@ -178,11 +202,16 @@ def classify_intent(text: str, *, force_execute: bool | None = None) -> Intent:
             r")\b",
             t,
         )
+    ) or bool(
+        re.search(
+            r"(?i)\b(izveido|uztaisi|uzraksti|uzprogramme|uzbuve|instale|kompile)\b",
+            folded,
+        )
     )
-    howto_only = bool(re.search(r"(?i)\b(kā\s+uztais|kā\s+izveidot|how\s+to\s+)", t)) and not explicit_do
+    howto_only = bool(re.search(r"(?i)\b(kā\s+uztais|ka\s+uztais|kā\s+izveidot|ka\s+izveidot|how\s+to\s+)", folded)) and not explicit_do
 
     # Atver programmu / pārlūku — PIRMS build, ja nav izveido/uztaisi
-    if _OPEN_RE.search(t) and not _SEARCH_RE.search(t) and not explicit_do:
+    if (_OPEN_RE.search(t) or re.search(r"(?i)\b(atver|atvert|open|palaid|palaist)\b", folded)) and not is_search and not explicit_do:
         # «atver un uztaisi» already has explicit_do; tīrs «atver notepad» = OPEN
         if not _BUILD_RE.search(t):
             return Intent.OPEN
@@ -190,9 +219,9 @@ def classify_intent(text: str, *, force_execute: bool | None = None) -> Intent:
     # BUILD PIRMS «iemācies» — «iemācies UN uztaisi» = IZPILDE (nevis tikai runāšana)
     if force_execute is not False and (_BUILD_RE.search(t) or explicit_do):
         if howto_only:
-            if _SEARCH_RE.search(t):
+            if is_search:
                 return Intent.SEARCH
-            if _LEARN_RE.search(t):
+            if is_learn:
                 return Intent.LEARN
             return Intent.EXPLAIN
         if t.endswith("?") and not explicit_do and not _BUILD_RE.search(t):
@@ -201,12 +230,15 @@ def classify_intent(text: str, *, force_execute: bool | None = None) -> Intent:
             return Intent.BUILD
 
     # Tīra mācīšanās / skaidrojums (bez izveido/uztaisi)
-    if _LEARN_RE.search(t):
+    if is_learn:
         return Intent.LEARN
-    if _EXPLAIN_RE.search(t):
+    if _EXPLAIN_RE.search(t) or re.search(
+        r"(?i)\b(izskaidro|izskaidrot|paskaidro|paskaidrot|pastasti\s+ka|stasti\s+ka|ka\s+strada|what\s+is|explain)\b",
+        folded,
+    ):
         return Intent.EXPLAIN
 
-    if _SEARCH_RE.search(t):
+    if is_search:
         return Intent.SEARCH
 
     # Īsa ziņa = tikai vārds uzvārds

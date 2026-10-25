@@ -19,6 +19,8 @@ def test_wants_execution_heuristics():
 
 
 def test_intent_search_learn_explain_build():
+    import unicodedata
+
     assert classify_intent("sveiks") == Intent.GREET
     assert classify_intent("cik ir 2+2") == Intent.MATH
 
@@ -26,6 +28,11 @@ def test_intent_search_learn_explain_build():
     assert classify_intent("izskaidro kas ir Python") == Intent.EXPLAIN
     assert classify_intent("Kas ir Python?") == Intent.EXPLAIN
     assert classify_intent("iemācies kā uztaisīt vienkāršu HTTP serveri") == Intent.LEARN
+    assert classify_intent("iemācies latviešu valodu") == Intent.LEARN
+    # Windows NFD / bez mīkstinājumiem — agrāk krita uz «pasaki konkrēti»
+    nfd = unicodedata.normalize("NFD", "iemācies latviešu valodu")
+    assert classify_intent(nfd) == Intent.LEARN
+    assert classify_intent("iemacies latviesu valodu") == Intent.LEARN
     # «sameklē kā strādā» = skaidrojuma intents (noderīgāks nekā tukša meklēšana)
     assert classify_intent("sameklē kā strādā regex") == Intent.EXPLAIN
     assert classify_intent("sameklē informāciju par Python list") == Intent.SEARCH
@@ -154,6 +161,32 @@ def test_local_greet_without_llm():
         r1 = await svc.chat(ChatRequest(message="sveiks", session_id="x"))
         assert "Sveiki" in r1.reply
         assert "Ollama" in r1.reply or "llama" in r1.reply.lower()
+
+    asyncio.run(run())
+
+
+def test_learn_latvian_never_bounces_to_pasaki_konkreti():
+    """Ekrānšāviņa bugs: «iemācies latviešu valodu» → «pasaki sameklē/uztaisi»."""
+    import asyncio
+    import unicodedata
+
+    from mainbrain.contracts.schemas import ChatRequest
+
+    svc = ChatService(models=None, brain=None)  # type: ignore[arg-type]
+
+    async def run():
+        for msg in (
+            "iemācies latviešu valodu",
+            unicodedata.normalize("NFD", "iemācies latviešu valodu"),
+            "iemacies latviesu valodu",
+        ):
+            r = await svc.chat(ChatRequest(message=msg, session_id=f"lv-{hash(msg)}"))
+            low = r.reply.lower()
+            assert "pasaki konkrēti" not in low
+            assert "pasaki konkreti" not in fold_diacritics(r.reply)
+            assert "iemāc" in low or "māc" in low or "latvie" in low or "avotu" in low
+
+    from mainbrain.brain.intent import fold_diacritics
 
     asyncio.run(run())
 

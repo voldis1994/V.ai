@@ -9,7 +9,14 @@ from pathlib import Path
 from urllib.parse import quote
 
 from mainbrain.brain.actions import PhysicalActor, duckduckgo_url
-from mainbrain.brain.intent import Intent, classify_intent, extract_topic, wants_execution
+from mainbrain.brain.intent import (
+    Intent,
+    classify_intent,
+    extract_topic,
+    fold_diacritics,
+    normalize_user_text,
+    wants_execution,
+)
 from mainbrain.contracts.schemas import ChatMessage, ChatRequest, ChatResponse, ModelRole, RunGoalRequest
 from mainbrain.core.ids import utc_now
 from mainbrain.models.router import ModelRouter
@@ -133,7 +140,8 @@ class ChatService:
     async def chat(self, req: ChatRequest) -> ChatResponse:
         session = req.session_id or "default"
         history = self._history(session)
-        user_msg = req.message.strip()
+        # NFC — Windows/IME NFD «iemācies» citādi nekad nesakrīt ar LEARN
+        user_msg = normalize_user_text(req.message)
         history.append({"role": "user", "content": user_msg})
         if len(history) > 10:
             del history[:-10]
@@ -175,24 +183,27 @@ class ChatService:
             if meta:
                 return self._finish(session, history, meta, user_msg=user_msg)
 
-        # Valodu īsie FAQ — tikai skaidri jautājumi par valodām (ne «izrunā valodu»)
-        if re.search(r"(?i)\b(kād[aā]s?\s+valod|which\s+language|scottish|scotland|skotij)", user_msg):
-            if re.search(r"(?i)(scottish|scotland|skot)", user_msg):
-                reply = (
-                    "Skotijā oficiāli lieto angļu; papildus — skotu (Scots) un skotu gēlu. "
-                    "Es atbildu latviski un angliski."
-                )
-            else:
-                reply = (
-                    "Es saprotu un atbildu latviešu un angļu valodā. "
-                    "Citas valodas — vāji (lokālais modelis)."
-                )
-            return self._finish(session, history, reply, user_msg=user_msg)
+        # Valodu īsie FAQ — TIKAI jautājumi «kādas valodas?» — NE «iemācies latviešu valodu»
+        folded_msg = fold_diacritics(user_msg)
+        if intent not in {Intent.LEARN, Intent.SEARCH, Intent.EXPLAIN, Intent.PERSON, Intent.BUILD}:
+            if re.search(r"(?i)\b(kadas?\s+valod|which\s+language|scottish|scotland|skotij)", folded_msg):
+                if re.search(r"(?i)(scottish|scotland|skot)", folded_msg):
+                    reply = (
+                        "Skotijā oficiāli lieto angļu; papildus — skotu (Scots) un skotu gēlu. "
+                        "Es atbildu latviski un angliski."
+                    )
+                else:
+                    reply = (
+                        "Es saprotu un atbildu latviešu un angļu valodā. "
+                        "Citas valodas — vāji (lokālais modelis)."
+                    )
+                return self._finish(session, history, reply, user_msg=user_msg)
 
         topic = extract_topic(user_msg)
 
         # «iemācies» bez tēmas — pajautā, KO iegaumēt (nevis atkārto meta frāzi)
-        if intent == Intent.LEARN and (not topic or topic.lower().strip() in {"iemācies", "learn", "iemāci"}):
+        learn_empty = {"iemācies", "iemacies", "learn", "iemāci", "iemaci", "apgūt", "apgut"}
+        if intent == Intent.LEARN and (not topic or topic.lower().strip() in learn_empty):
             ask = (
                 "Labi — ko tieši iegaumēt? Piemēram: «iemācies kas ir Python» "
                 "vai «iemācies Edgars Gaidulis». Es sameklēšu, saglabāšu failā un atmiņā."
@@ -212,6 +223,18 @@ class ChatService:
                 topic,
                 intent,
                 learn=intent == Intent.LEARN,
+            )
+
+        # Drošības tīkls: ja tekstā ir iemācies/sameklē, NEKAD nekrīt uz «pasaki konkrēti»
+        if re.search(r"(?i)\b(iemacies|iemacities|samekle|mekle|izskaidro|learn|search|explain)\b", folded_msg):
+            return await self._search_and_act(
+                req,
+                session,
+                history,
+                user_msg,
+                topic or user_msg,
+                Intent.LEARN if "iemac" in folded_msg or "learn" in folded_msg else Intent.SEARCH,
+                learn=("iemac" in folded_msg or "learn" in folded_msg or "apgut" in folded_msg),
             )
 
         # Elementāri uzdevumi — deterministiski, BEZ llama/Ollama gaidīšanas
@@ -427,6 +450,19 @@ class ChatService:
             spoken = (
                 f"Par «{q or search_q}» sameklēju internetā (DuckDuckGo mazajā lodziņā). "
                 "Īsu, tīru kopsavilkumu no avotiem šoreiz nesaliku — bet meklēšana notika un lodziņu aizveru."
+            )
+        # «iemācies latviešu valodu» — nevis «pasaki sameklē», bet apstiprini + saglabā
+        topic_fold = fold_diacritics(q or search_q)
+        if learn and re.search(r"(?i)latvies", topic_fold) and re.search(r"(?i)valod", topic_fold):
+            spoken = (
+                "Saprotu — mācos latviešu valodu un atbildēšu latviski, skaidri, saviem vārdiem. "
+                + spoken
+            )
+            self._remember(
+                "latviešu valoda",
+                "Lietotājs lūdza iemācīties latviešu valodu. Atbildu latviski, "
+                "sintezēju no avotiem, ne copy-paste. Preferēju skaidru LV.",
+                kind="learn",
             )
 
         # Saglabā .md BEZ Notepad gaidīšanas (Desktop var atvērt pēc atbildes)
@@ -775,24 +811,31 @@ class ChatService:
             body = "\n".join(f"• {h[:280]}" for h in local[:3])
             return (
                 f"No atmiņas par «{topic or user_msg}»:\n{body}\n\n"
-                "Ja vajag svaigu info: «sameklē …». Ja taisīt: «uztaisi …»."
+                "Ja vajag svaigu info: «sameklē …». Ja mācīties: «iemācies …»."
             )
         # Heuristika — saprot uzdevumu un ROSINA darbību, nevis gaida modeli
-        low = (user_msg or "").lower()
+        low = fold_diacritics(user_msg or "")
         if re.search(r"(?i)\b(paldies|thanks|ok|okei|labi|super)\b", low) and len(low) < 40:
             return "Labi. Ko darām tālāk?"
-        if re.search(r"(?i)\b(palīdzi|help|ko\s+tu\s+vari|spēj)\b", low):
+        if re.search(r"(?i)\b(palidzi|help|ko\s+tu\s+vari|spej)\b", low):
             return (
                 "Es daru uzreiz datorā (bez Ollama gaidīšanas):\n"
+                "• «iemācies latviešu valodu» — sameklēšu + iemācīšos + saglabāšu\n"
                 "• «sameklē Voldis Sidorovs» — meklēšu + saglabāšu + pastāstīšu\n"
                 "• «uzraksti python hello.py» — uzrakstīšu failu un rādīšu kodu\n"
                 "• «atver notepad» — atvēršu programmu\n"
                 "• «ko tu redzi» — kameras kadrs\n"
                 "• «pasaki …» — balsī (Everita)"
             )
+        # NEKAD nesaki «pasaki sameklē/uztaisi», ja lietotājs jau teica iemācies
+        if re.search(r"(?i)\b(iemac|learn|samekle|mekle|apgut)\b", low):
+            return (
+                f"Saprotu «{user_msg}» — tas ir mācīšanās/meklēšanas uzdevums. "
+                "Mēģinu vēlreiz: saki to pašu, es sameklēšu un iegaumēšu."
+            )
         return (
             f"Saprotu: «{user_msg}». Daru bez modeļa gaidīšanas — "
-            "pasaki konkrēti: sameklē / uztaisi / atver / pasaki."
+            "pasaki konkrēti: iemācies / sameklē / uztaisi / atver / pasaki."
         )
 
     async def _llm_task(
